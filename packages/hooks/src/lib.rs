@@ -67,8 +67,8 @@ pub use use_coroutine::*;
 mod use_future;
 pub use use_future::*;
 
-mod use_sorted;
-pub use use_sorted::*;
+// mod use_sorted;
+// pub use use_sorted::*;
 
 mod use_resource;
 pub use use_resource::*;

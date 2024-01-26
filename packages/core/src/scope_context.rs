@@ -345,6 +345,10 @@ impl ScopeId {
         None
     }
 
+    pub fn spawn_post_run(self, fut: impl Future<Output = ()> + 'static) -> Task {
+        Runtime::with_scope(self, |cx| cx.spawn_forever(fut)).expect("to be in a dioxus runtime")
+    }
+
     /// Pushes the future onto the poll queue to be polled after the component renders.
     pub fn push_future(self, fut: impl Future<Output = ()> + 'static) -> Option<Task> {
         Runtime::with_scope(self, |cx| cx.spawn(fut))

@@ -8,20 +8,21 @@ fn app() -> Element {
     let mut count = use_signal(|| 0);
 
     rsx! {
-        Child { count: "High-Five counter: {count}" }
-        Child { count: "count" }
+        h3 { "High-Five counter: {count}" }
         button { onclick: move |_| count += 1, "Up high!" }
         button { onclick: move |_| count -= 1, "Down low!" }
     }
 }
 
-#[derive(Props, Clone, PartialEq)]
-struct ChildProps {
-    count: Option<String>,
-}
+// Child { count: "High-Five counter: {count}" }
+//         Child { count: "count" }
+// #[derive(Props, Clone, PartialEq)]
+// struct ChildProps {
+//     count: Option<String>,
+// }
 
-fn Child(props: ChildProps) -> Element {
-    rsx! {
-        h1 { "{props.count.unwrap_or_default()}" }
-    }
-}
+// fn Child(props: ChildProps) -> Element {
+//     rsx! {
+//         h1 { "{props.count.unwrap_or_default()}" }
+//     }
+// }

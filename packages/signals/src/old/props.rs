@@ -6,7 +6,7 @@ pub struct SignalFromMarker<M>(std::marker::PhantomData<M>);
 
 impl<T, O, M> SuperFrom<T, SignalFromMarker<M>> for Signal<O>
 where
-    O: SuperFrom<T, M>,
+    O: SuperFrom<T, M> + 'static,
 {
     fn super_from(input: T) -> Self {
         Signal::new(O::super_from(input))

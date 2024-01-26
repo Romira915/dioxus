@@ -13,6 +13,14 @@ fn app() -> Element {
     // use_memo will recompute the value of the signal whenever the captured signals change
     let doubled_count = use_memo(move || count() * 2);
 
+    // use_async_memo will spawn a future that *eventually* resolves to a value
+    // If the captured signals change, the future will be cancelled and restarted.
+    // Consider debouncing the captured signals to slow down the rate of restarts.
+    let slow_count = use_async_memo(move || async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        count() * 2
+    });
+
     // use_effect will subscribe to any changes in the signal values it captures
     // effects will always run after first mount and then whenever the signal values change
     use_effect(move || println!("Count changed to {}", count()));
@@ -23,18 +31,15 @@ fn app() -> Element {
             if running() {
                 count += 1;
             }
+
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
     });
 
-    // use_resource will spawn a future that resolves to a value - essentially an async memo
-    let slow_count = use_resource(move || async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        count() * 2
-    });
-
     rsx! {
         h1 { "High-Five counter: {count}" }
+        h3 { "Doubled counter: {doubled_count}" }
+        h3 { "Slow counter: {slow_count:?}" }
         button { onclick: move |_| count += 1, "Up high!" }
         button { onclick: move |_| count -= 1, "Down low!" }
         button { onclick: move |_| running.toggle(), "Toggle counter" }

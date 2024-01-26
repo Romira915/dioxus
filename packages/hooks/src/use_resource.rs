@@ -5,7 +5,9 @@ use dioxus_core::{
 };
 use dioxus_signals::*;
 use futures_util::{future, pin_mut, FutureExt};
-use std::{any::Any, cell::Cell, future::Future, pin::Pin, rc::Rc, sync::Arc, task::Poll};
+use std::{
+    any::Any, cell::Cell, future::Future, path::Display, pin::Pin, rc::Rc, sync::Arc, task::Poll,
+};
 
 /// A future that resolves to a value.
 ///
@@ -20,7 +22,7 @@ use std::{any::Any, cell::Cell, future::Future, pin::Pin, rc::Rc, sync::Arc, tas
 /// will be canceled before the new one is started.
 ///
 /// - dependencies: a tuple of references to values that are PartialEq + Clone
-pub fn use_resource<T, F>(future: impl Fn() -> F) -> UseResource<T>
+pub fn use_async_memo<T, F>(future: impl Fn() -> F) -> AsyncMemo<T>
 where
     T: 'static,
     F: Future<Output = T> + 'static,
@@ -57,16 +59,16 @@ where
         Some(task)
     });
 
-    UseResource { task, value, state }
+    AsyncMemo { task, value, state }
 }
 
-pub struct UseResource<T: 'static> {
+pub struct AsyncMemo<T: 'static> {
     value: Signal<Option<T>>,
     task: Signal<Option<Task>>,
     state: Signal<UseResourceState<T>>,
 }
 
-impl<T> UseResource<T> {
+impl<T> AsyncMemo<T> {
     /// Restart the future with new dependencies.
     ///
     /// Will not cancel the previous future, but will ignore any values that it
@@ -81,6 +83,11 @@ impl<T> UseResource<T> {
         // if let Some(task) = self.task.take() {
         //     cx.remove_future(task);
         // }
+    }
+
+    /// Suspend the component until the future is resolved
+    pub fn suspend(&self) -> Option<ReadOnlySignal<T>> {
+        todo!()
     }
 
     // Manually set the value in the future slot without starting the future over
@@ -117,6 +124,12 @@ impl<T> UseResource<T> {
         //     // Task, no value - we're still pending
         //     (Some(_), None) => UseResourceState::Pending,
         // }
+    }
+}
+
+impl<T> std::fmt::Display for AsyncMemo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
     }
 }
 

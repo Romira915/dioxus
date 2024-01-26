@@ -1,4 +1,4 @@
-use crate::write::*;
+use crate::{use_callback, write::*};
 use core::{self, fmt::Debug};
 use dioxus_core::prelude::*;
 use futures_channel::mpsc::UnboundedSender;
@@ -76,10 +76,15 @@ pub(crate) fn get_effect_ref() -> EffectStackRef {
 /// Create a new effect. The effect will be run immediately and whenever any signal it reads changes.
 /// The signal will be owned by the current component and will be dropped when the component is dropped.
 pub fn use_effect(callback: impl FnMut() + 'static) {
-    use_hook(|| Effect::new(callback));
+    // Make a callback that's always current, to prevent stale data
+    let mut callback = use_callback(callback);
+
+    // Create an effect that runs the callback
+    use_hook(|| Effect::new(move || callback.call()));
 }
 
-/// Effects allow you to run code when a signal changes. Effects are run immediately and whenever any signal it reads changes.
+/// Effects allow you to run code when a signal changes.
+/// Effects are run immediately and whenever any signal it reads changes.
 #[derive(Copy, Clone, PartialEq)]
 pub struct Effect {
     pub(crate) source: ScopeId,
@@ -126,7 +131,7 @@ impl Effect {
     /// Create a new effect. The effect will be run immediately and whenever any signal it reads changes.
     ///
     /// The signal will be owned by the current component and will be dropped when the component is dropped.
-    pub fn new(mut callback: impl FnMut() + 'static) -> Self {
+    fn new(mut callback: impl FnMut() + 'static) -> Self {
         let source = current_scope_id().expect("in a virtual dom");
         let myself = Self {
             source,
@@ -142,6 +147,7 @@ impl Effect {
         });
         tracing::trace!("Created effect: {:?}", myself);
 
+        // Queue the effect to be run after mount
         get_effect_ref().rerun_effect(myself.inner.id());
 
         myself

@@ -3,16 +3,27 @@ use crate::{
     references::{GenerationalRef, GenerationalRefMut},
     AnyStorage, MemoryLocation, MemoryLocationInner, Storage,
 };
-use std::cell::{Ref, RefCell, RefMut};
+use std::{
+    any::{Any, TypeId},
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    marker::PhantomData,
+};
 
-/// A unsync storage. This is the default storage type.
-#[derive(Default)]
-pub struct UnsyncStorage(RefCell<Option<Box<dyn std::any::Any>>>);
+/// An arena for a given type T
+///
+/// V Is not guaranteed to be Send/Sync, so this is not Send/Sync compatible
+pub struct GenericStorage<V>(RefCell<Option<V>>);
 
-impl<T: 'static> Storage<T> for UnsyncStorage {
+impl<T> Default for GenericStorage<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T: 'static> Storage<T> for GenericStorage<T> {
     fn try_read(
         &'static self,
-
         #[cfg(any(debug_assertions, feature = "debug_ownership"))]
         at: crate::GenerationalRefBorrowInfo,
     ) -> Result<Self::Ref<T>, error::BorrowError> {
@@ -26,7 +37,7 @@ impl<T: 'static> Storage<T> for UnsyncStorage {
             error::BorrowError::AlreadyBorrowedMut(error::AlreadyBorrowedMutError {})
         })?;
 
-        Ref::filter_map(borrow, |any| any.as_ref()?.downcast_ref())
+        Ref::filter_map(borrow, |any| any.as_ref())
             .map_err(|_| {
                 error::BorrowError::Dropped(error::ValueDroppedError {
                     #[cfg(any(debug_assertions, feature = "debug_ownership"))]
@@ -56,7 +67,7 @@ impl<T: 'static> Storage<T> for UnsyncStorage {
         let borrow = borrow
             .map_err(|_| error::BorrowMutError::AlreadyBorrowed(error::AlreadyBorrowedError {}))?;
 
-        RefMut::filter_map(borrow, |any| any.as_mut()?.downcast_mut())
+        RefMut::filter_map(borrow, |any| any.as_mut())
             .map_err(|_| {
                 error::BorrowMutError::Dropped(error::ValueDroppedError {
                     #[cfg(any(debug_assertions, feature = "debug_ownership"))]
@@ -73,15 +84,15 @@ impl<T: 'static> Storage<T> for UnsyncStorage {
     }
 
     fn set(&self, value: T) {
-        *self.0.borrow_mut() = Some(Box::new(value));
+        *self.0.borrow_mut() = Some(value);
     }
 }
 
 thread_local! {
-    static UNSYNC_RUNTIME: RefCell<Vec<MemoryLocation<UnsyncStorage>>> = RefCell::new(Vec::new());
+    static GENERIC_RUNTIME: RefCell<HashMap<TypeId, Box<dyn Any>>> = RefCell::new(HashMap::new());
 }
 
-impl AnyStorage for UnsyncStorage {
+impl<V: 'static> AnyStorage for GenericStorage<V> {
     type Ref<R: ?Sized + 'static> = GenerationalRef<Ref<'static, R>>;
     type Mut<W: ?Sized + 'static> = GenerationalRefMut<RefMut<'static, W>>;
 
@@ -133,12 +144,23 @@ impl AnyStorage for UnsyncStorage {
     }
 
     fn claim() -> MemoryLocation<Self> {
-        UNSYNC_RUNTIME.with(|runtime| {
-            if let Some(location) = runtime.borrow_mut().pop() {
+        GENERIC_RUNTIME.with(|runtime| {
+            let mut rt = runtime.borrow_mut();
+
+            let entry = rt.entry(TypeId::of::<V>()).or_insert_with(|| {
+                let t: Vec<MemoryLocation<GenericStorage<V>>> = Vec::new();
+                Box::new(t) as Box<dyn Any>
+            });
+
+            let vec = entry
+                .downcast_mut::<Vec<MemoryLocation<GenericStorage<V>>>>()
+                .unwrap();
+
+            let p = if let Some(location) = vec.pop() {
                 location
             } else {
-                let data: &'static MemoryLocationInner =
-                    &*Box::leak(Box::new(MemoryLocationInner {
+                let data: &'static MemoryLocationInner<GenericStorage<V>> =
+                    &*Box::leak(Box::new(MemoryLocationInner::<GenericStorage<V>> {
                         data: Self::default(),
                         #[cfg(any(debug_assertions, feature = "check_generation"))]
                         generation: 0.into(),
@@ -146,16 +168,35 @@ impl AnyStorage for UnsyncStorage {
                         borrow: Default::default(),
                     }));
                 MemoryLocation(data)
-            }
+            };
+
+            p
         })
     }
 
     fn recycle(location: &MemoryLocation<Self>) {
         location.drop();
-        UNSYNC_RUNTIME.with(|runtime| runtime.borrow_mut().push(*location));
+
+        GENERIC_RUNTIME.with(|runtime| {
+            let mut rt = runtime.borrow_mut();
+
+            let entry = rt.entry(TypeId::of::<V>()).or_insert_with(|| {
+                let t: Vec<MemoryLocation<GenericStorage<V>>> = Vec::new();
+                Box::new(t) as Box<dyn Any>
+            });
+
+            let vec = entry
+                .downcast_mut::<Vec<MemoryLocation<GenericStorage<V>>>>()
+                .unwrap();
+
+            vec.push(*location);
+        });
     }
 
     fn owner() -> crate::Owner<Self> {
-        todo!()
+        crate::Owner {
+            owned: Default::default(),
+            phantom: PhantomData,
+        }
     }
 }

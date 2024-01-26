@@ -3,7 +3,7 @@ use crate::rt::CopyValue;
 use crate::signal::Signal;
 use crate::write::Writable;
 use crate::{GlobalMemo, GlobalSignal, ReadOnlySignal, SignalData};
-use generational_box::Storage;
+use generational_box::{GenerationalBoxValue, Storage};
 
 use std::{
     fmt::{Debug, Display},
@@ -115,24 +115,24 @@ macro_rules! write_impls {
 read_impls!(CopyValue, S: Storage<T>, S: Storage<Vec<T>>);
 write_impls!(CopyValue, Storage<T>, Storage<Vec<T>>);
 
-impl<T: 'static, S: Storage<T>> Clone for CopyValue<T, S> {
+impl<T: GenerationalBoxValue + ?Sized, S: Storage<T>> Clone for CopyValue<T, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: 'static, S: Storage<T>> Copy for CopyValue<T, S> {}
+impl<T: GenerationalBoxValue + ?Sized, S: Storage<T>> Copy for CopyValue<T, S> {}
 
 read_impls!(Signal, S: Storage<SignalData<T>>, S: Storage<SignalData<Vec<T>>>);
 write_impls!(Signal, Storage<SignalData<T>>, Storage<SignalData<Vec<T>>>);
 
-impl<T: 'static, S: Storage<SignalData<T>>> Clone for Signal<T, S> {
+impl<T: GenerationalBoxValue, S: Storage<SignalData<T>>> Clone for Signal<T, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: 'static, S: Storage<SignalData<T>>> Copy for Signal<T, S> {}
+impl<T: GenerationalBoxValue, S: Storage<SignalData<T>>> Copy for Signal<T, S> {}
 
 read_impls!(
     ReadOnlySignal,
@@ -140,13 +140,13 @@ read_impls!(
     S: Storage<SignalData<Vec<T>>>
 );
 
-impl<T: 'static, S: Storage<SignalData<T>>> Clone for ReadOnlySignal<T, S> {
+impl<T: GenerationalBoxValue, S: Storage<SignalData<T>>> Clone for ReadOnlySignal<T, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: 'static, S: Storage<SignalData<T>>> Copy for ReadOnlySignal<T, S> {}
+impl<T: GenerationalBoxValue, S: Storage<SignalData<T>>> Copy for ReadOnlySignal<T, S> {}
 
 read_impls!(GlobalSignal);
 

@@ -23,21 +23,22 @@ impl<T: PartialEq + 'static> GlobalMemo<T> {
 
     /// Get the signal that backs this global.
     pub fn signal(&self) -> ReadOnlySignal<T> {
-        let key = self as *const _ as *const ();
+        todo!()
+        // let key = self as *const _ as *const ();
 
-        let context = get_global_context();
+        // let context = get_global_context();
 
-        let read = context.signal.borrow();
-        match read.get(&key) {
-            Some(signal) => *signal.downcast_ref::<ReadOnlySignal<T>>().unwrap(),
-            None => {
-                drop(read);
-                // Constructors are always run in the root scope
-                let signal = ScopeId::ROOT.in_runtime(|| Signal::selector(self.selector));
-                context.signal.borrow_mut().insert(key, Box::new(signal));
-                signal
-            }
-        }
+        // let read = context.signal.borrow();
+        // match read.get(&key) {
+        //     Some(signal) => *signal.downcast_ref::<ReadOnlySignal<T>>().unwrap(),
+        //     None => {
+        //         drop(read);
+        //         // Constructors are always run in the root scope
+        //         let signal = ScopeId::ROOT.in_runtime(|| Signal::selector(self.selector));
+        //         context.signal.borrow_mut().insert(key, Box::new(signal));
+        //         signal
+        //     }
+        // }
     }
 
     /// Get the scope the signal was created in.
@@ -54,7 +55,10 @@ impl<T: PartialEq + 'static> GlobalMemo<T> {
 impl<T: PartialEq + 'static> Readable<T> for GlobalMemo<T> {
     type Ref<R: ?Sized + 'static> = generational_box::GenerationalRef<std::cell::Ref<'static, R>>;
 
-    fn map_ref<I, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F) -> Self::Ref<U> {
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Self::Ref<U> {
         <UnsyncStorage as AnyStorage>::map(ref_, f)
     }
 

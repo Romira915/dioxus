@@ -9,9 +9,9 @@ use dioxus_core::ScopeId;
 
 use generational_box::{GenerationalBox, Owner, Storage};
 
-use crate::Effect;
-use crate::Readable;
-use crate::Writable;
+// use crate::Effect;
+// use crate::Readable;
+// use crate::Writable;
 
 fn current_owner<S: Storage<T>, T>() -> Rc<Owner<S>> {
     match Effect::current() {
@@ -44,9 +44,20 @@ fn owner_in_scope<S: Storage<T>, T>(scope: ScopeId) -> Rc<Owner<S>> {
 /// CopyValue is a wrapper around a value to make the value mutable and Copy.
 ///
 /// It is internally backed by [`generational_box::GenerationalBox`].
-pub struct CopyValue<T: 'static, S: Storage<T> = UnsyncStorage> {
+pub struct CopyValue<T: ?Sized + 'static, S: 'static = UnsyncStorage> {
     pub(crate) value: GenerationalBox<T, S>,
     origin_scope: ScopeId,
+}
+
+#[test]
+fn it_copies() {
+    fn makes() -> CopyValue<dyn Fn()> {
+        todo!()
+    }
+
+    let g = makes();
+
+    g.clone();
 }
 
 #[cfg(feature = "serde")]
@@ -71,28 +82,28 @@ where
     }
 }
 
-impl<T: 'static> CopyValue<T> {
+impl<T: 'static + ?Sized> CopyValue<T> {
     /// Create a new CopyValue. The value will be stored in the current component.
     ///
     /// Once the component this value is created in is dropped, the value will be dropped.
     #[track_caller]
-    pub fn new(value: T) -> Self {
+    pub fn new(value: Box<T>) -> Self {
         Self::new_maybe_sync(value)
     }
 
     /// Create a new CopyValue. The value will be stored in the given scope. When the specified scope is dropped, the value will be dropped.
     #[track_caller]
-    pub fn new_in_scope(value: T, scope: ScopeId) -> Self {
+    pub fn new_in_scope(value: Box<T>, scope: ScopeId) -> Self {
         Self::new_maybe_sync_in_scope(value, scope)
     }
 }
 
-impl<T: 'static, S: Storage<T>> CopyValue<T, S> {
+impl<T: 'static + ?Sized, S: Storage<T>> CopyValue<T, S> {
     /// Create a new CopyValue. The value will be stored in the current component.
     ///
     /// Once the component this value is created in is dropped, the value will be dropped.
     #[track_caller]
-    pub fn new_maybe_sync(value: T) -> Self {
+    pub fn new_maybe_sync(value: Box<T>) -> Self {
         let owner = current_owner();
 
         Self {
@@ -102,7 +113,7 @@ impl<T: 'static, S: Storage<T>> CopyValue<T, S> {
     }
 
     pub(crate) fn new_with_caller(
-        value: T,
+        value: Box<T>,
         #[cfg(debug_assertions)] caller: &'static std::panic::Location<'static>,
     ) -> Self {
         let owner = current_owner();
@@ -119,7 +130,7 @@ impl<T: 'static, S: Storage<T>> CopyValue<T, S> {
 
     /// Create a new CopyValue. The value will be stored in the given scope. When the specified scope is dropped, the value will be dropped.
     #[track_caller]
-    pub fn new_maybe_sync_in_scope(value: T, scope: ScopeId) -> Self {
+    pub fn new_maybe_sync_in_scope(value: Box<T>, scope: ScopeId) -> Self {
         let owner = owner_in_scope(scope);
 
         Self {
@@ -148,10 +159,13 @@ impl<T: 'static, S: Storage<T>> CopyValue<T, S> {
     }
 }
 
-impl<T: 'static, S: Storage<T>> Readable<T> for CopyValue<T, S> {
+impl<T: 'static + ?Sized, S: Storage<T>> Readable<T> for CopyValue<T, S> {
     type Ref<R: ?Sized + 'static> = S::Ref<R>;
 
-    fn map_ref<I, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F) -> Self::Ref<U> {
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Self::Ref<U> {
         S::map(ref_, f)
     }
 
@@ -171,7 +185,7 @@ impl<T: 'static, S: Storage<T>> Readable<T> for CopyValue<T, S> {
     }
 }
 
-impl<T: 'static, S: Storage<T>> Writable<T> for CopyValue<T, S> {
+impl<T: 'static + ?Sized, S: Storage<T>> Writable<T> for CopyValue<T, S> {
     type Mut<R: ?Sized + 'static> = S::Mut<R>;
 
     fn map_mut<I, U: ?Sized, F: FnOnce(&mut I) -> &mut U>(
@@ -197,17 +211,21 @@ impl<T: 'static, S: Storage<T>> Writable<T> for CopyValue<T, S> {
     }
 
     fn set(&mut self, value: T) {
-        self.value.set(value);
+        if let Ok(mut val) = self.try_write() {
+            *val = value;
+        } else {
+            self.value.set(Box::new(value));
+        }
     }
 }
 
-impl<T: 'static, S: Storage<T>> PartialEq for CopyValue<T, S> {
+impl<T: 'static + ?Sized, S: Storage<T>> PartialEq for CopyValue<T, S> {
     fn eq(&self, other: &Self) -> bool {
         self.value.ptr_eq(&other.value)
     }
 }
 
-impl<T: Copy, S: Storage<T>> Deref for CopyValue<T, S> {
+impl<T: 'static + Copy + ?Sized, S: Storage<T>> Deref for CopyValue<T, S> {
     type Target = dyn Fn() -> T;
 
     fn deref(&self) -> &Self::Target {

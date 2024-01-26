@@ -72,7 +72,10 @@ impl<T: 'static> GlobalSignal<T> {
 impl<T: 'static> Readable<T> for GlobalSignal<T> {
     type Ref<R: ?Sized + 'static> = generational_box::GenerationalRef<std::cell::Ref<'static, R>>;
 
-    fn map_ref<I, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F) -> Self::Ref<U> {
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Self::Ref<U> {
         <UnsyncStorage as AnyStorage>::map(ref_, f)
     }
 

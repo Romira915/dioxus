@@ -5,34 +5,8 @@ use dioxus_core::{prelude::IntoAttributeValue, ScopeId};
 use generational_box::{Storage, UnsyncStorage};
 
 /// A signal that can only be read from.
-pub struct ReadOnlySignal<T: 'static, S: Storage<SignalData<T>> = UnsyncStorage> {
+pub struct ReadOnlySignal<T: 'static, S: 'static = UnsyncStorage> {
     inner: Signal<T, S>,
-}
-
-impl<T: 'static, S: Storage<SignalData<T>>> From<Signal<T, S>> for ReadOnlySignal<T, S> {
-    fn from(inner: Signal<T, S>) -> Self {
-        Self { inner }
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<T: serde::Serialize + 'static, Store: Storage<SignalData<T>>> serde::Serialize
-    for ReadOnlySignal<T, Store>
-{
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.read().serialize(serializer)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de, T: serde::Deserialize<'de> + 'static, Store: Storage<SignalData<T>>>
-    serde::Deserialize<'de> for ReadOnlySignal<T, Store>
-{
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Self::new_maybe_sync(Signal::new_maybe_sync(
-            T::deserialize(deserializer)?,
-        )))
-    }
 }
 
 impl<T: 'static> ReadOnlySignal<T> {
@@ -61,10 +35,13 @@ impl<T: 'static, S: Storage<SignalData<T>>> ReadOnlySignal<T, S> {
     }
 }
 
-impl<T, S: Storage<SignalData<T>>> Readable<T> for ReadOnlySignal<T, S> {
+impl<T: 'static, S: Storage<SignalData<T>>> Readable<T> for ReadOnlySignal<T, S> {
     type Ref<R: ?Sized + 'static> = S::Ref<R>;
 
-    fn map_ref<I, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F) -> Self::Ref<U> {
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Self::Ref<U> {
         S::map(ref_, f)
     }
 
@@ -93,7 +70,7 @@ impl<T, S: Storage<SignalData<T>>> Readable<T> for ReadOnlySignal<T, S> {
 
 impl<T> IntoAttributeValue for ReadOnlySignal<T>
 where
-    T: Clone + IntoAttributeValue,
+    T: Clone + IntoAttributeValue + 'static,
 {
     fn into_value(self) -> dioxus_core::AttributeValue {
         self.with(|f| f.clone().into_value())
@@ -106,7 +83,33 @@ impl<T: 'static, S: Storage<SignalData<T>>> PartialEq for ReadOnlySignal<T, S> {
     }
 }
 
-impl<T: Clone, S: Storage<SignalData<T>> + 'static> Deref for ReadOnlySignal<T, S> {
+impl<T: 'static, S: Storage<SignalData<T>>> From<Signal<T, S>> for ReadOnlySignal<T, S> {
+    fn from(inner: Signal<T, S>) -> Self {
+        Self { inner }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: serde::Serialize + 'static, Store: Storage<SignalData<T>>> serde::Serialize
+    for ReadOnlySignal<T, Store>
+{
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.read().serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: serde::Deserialize<'de> + 'static, Store: Storage<SignalData<T>>>
+    serde::Deserialize<'de> for ReadOnlySignal<T, Store>
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::new_maybe_sync(Signal::new_maybe_sync(
+            T::deserialize(deserializer)?,
+        )))
+    }
+}
+
+impl<T: Clone + 'static, S: Storage<SignalData<T>> + 'static> Deref for ReadOnlySignal<T, S> {
     type Target = dyn Fn() -> T;
 
     fn deref(&self) -> &Self::Target {

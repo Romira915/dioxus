@@ -23,7 +23,7 @@ impl AnyStorage for SyncStorage {
     type Ref<R: ?Sized + 'static> = GenerationalRef<MappedRwLockReadGuard<'static, R>>;
     type Mut<W: ?Sized + 'static> = GenerationalRefMut<MappedRwLockWriteGuard<'static, W>>;
 
-    fn try_map<I, U: ?Sized + 'static>(
+    fn try_map<I: ?Sized, U: ?Sized + 'static>(
         ref_: Self::Ref<I>,
         f: impl FnOnce(&I) -> Option<&U>,
     ) -> Option<Self::Ref<U>> {
@@ -93,6 +93,10 @@ impl AnyStorage for SyncStorage {
     fn recycle(location: &MemoryLocation<Self>) {
         location.drop();
         sync_runtime().lock().push(*location);
+    }
+
+    fn owner() -> crate::Owner<Self> {
+        todo!()
     }
 }
 

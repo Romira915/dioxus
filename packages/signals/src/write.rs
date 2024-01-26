@@ -3,7 +3,7 @@ use std::ops::DerefMut;
 use crate::read::Readable;
 
 /// A trait for states that can be read from like [`crate::Signal`], or [`crate::GlobalSignal`]. You may choose to accept this trait as a parameter instead of the concrete type to allow for more flexibility in your API. For example, instead of creating two functions, one that accepts a [`crate::Signal`] and one that accepts a [`crate::GlobalSignal`], you can create one function that accepts a [`Writable`] type.
-pub trait Writable<T: 'static>: Readable<T> {
+pub trait Writable<T: 'static + ?Sized>: Readable<T> {
     /// The type of the reference.
     type Mut<R: ?Sized + 'static>: DerefMut<Target = R>;
 

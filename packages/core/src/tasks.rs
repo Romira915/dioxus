@@ -1,10 +1,10 @@
 use crate::innerlude::{remove_future, spawn, Runtime};
 use crate::ScopeId;
 use futures_util::task::ArcWake;
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Waker;
+use std::{cell::Cell, future::Future};
 use std::{cell::RefCell, rc::Rc};
 
 /// A task's unique identifier.
@@ -58,6 +58,7 @@ impl Runtime {
                 parent: self.current_task(),
                 task: RefCell::new(Box::pin(task)),
                 scope,
+                poke: Cell::new(Poke::NoPoke),
                 waker: futures_util::task::waker(Arc::new(LocalTaskHandle {
                     id: task_id,
                     tx: self.sender.clone(),
@@ -152,6 +153,21 @@ pub(crate) struct LocalTask {
     parent: Option<Task>,
     task: RefCell<Pin<Box<dyn Future<Output = ()> + 'static>>>,
     waker: Waker,
+
+    // Is this task configured to drop before the next render?
+    poke: Cell<Poke>,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum Poke {
+    /// Future won't be polled until it's poked by render
+    Poked,
+
+    /// Future is waiting to be poked by render
+    WaitingPoke,
+
+    /// Future doesn't need to be poked by render
+    NoPoke,
 }
 
 /// The type of message that can be sent to the scheduler.

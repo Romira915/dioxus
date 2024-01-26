@@ -1,12 +1,13 @@
 use std::ops::Deref;
 
 /// A trait for states that can be read from like [`crate::Signal`], [`crate::GlobalSignal`], or [`crate::ReadOnlySignal`]. You may choose to accept this trait as a parameter instead of the concrete type to allow for more flexibility in your API. For example, instead of creating two functions, one that accepts a [`crate::Signal`] and one that accepts a [`crate::GlobalSignal`], you can create one function that accepts a [`Readable`] type.
-pub trait Readable<T: 'static = ()> {
+pub trait Readable<T: ?Sized + 'static = ()> {
     /// The type of the reference.
     type Ref<R: ?Sized + 'static>: Deref<Target = R>;
 
     /// Map the reference to a new type.
-    fn map_ref<I, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F) -> Self::Ref<U>;
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(ref_: Self::Ref<I>, f: F)
+        -> Self::Ref<U>;
 
     /// Try to map the reference to a new type.
     fn try_map_ref<I, U: ?Sized, F: FnOnce(&I) -> Option<&U>>(

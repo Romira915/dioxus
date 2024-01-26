@@ -10,12 +10,14 @@ use std::fmt::Display;
 /// A read only signal that has been mapped to a new type.
 pub struct MappedSignal<U: 'static + ?Sized> {
     origin_scope: ScopeId,
-    mapping: CopyValue<Box<dyn Fn() -> U>>,
+    mapping: CopyValue<dyn MappedFn<U>>,
 }
+
+trait MappedFn<U>: Fn() -> U {}
 
 impl MappedSignal<()> {
     /// Create a new mapped signal.
-    pub fn new<T, S, U>(
+    pub fn new<T: 'static, S, U>(
         signal: Signal<T, S>,
         mapping: impl Fn(&T) -> &U + 'static,
     ) -> MappedSignal<S::Ref<U>>
@@ -60,13 +62,13 @@ impl<U: ?Sized> PartialEq for MappedSignal<U> {
     }
 }
 
-impl<U> std::clone::Clone for MappedSignal<U> {
+impl<U: ?Sized> std::clone::Clone for MappedSignal<U> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<U> Copy for MappedSignal<U> {}
+// impl<U: ?Sized> Copy for MappedSignal<U> {}
 
 impl<U: Display> Display for MappedSignal<U> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

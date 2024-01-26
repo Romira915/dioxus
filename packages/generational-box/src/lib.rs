@@ -10,11 +10,13 @@ use std::{
 };
 
 pub use error::*;
+pub use generic_storage::GenericStorage;
 pub use references::*;
 pub use sync::SyncStorage;
 pub use unsync::UnsyncStorage;
 
 mod error;
+mod generic_storage;
 mod references;
 mod sync;
 mod unsync;
@@ -41,8 +43,11 @@ impl Debug for GenerationalBoxId {
     }
 }
 
+pub trait GenerationalBoxValue: 'static {}
+impl<T: 'static> GenerationalBoxValue for T where T: ?Sized {}
+
 /// The core Copy state type. The generational box will be dropped when the [Owner] is dropped.
-pub struct GenerationalBox<T, S: 'static = UnsyncStorage> {
+pub struct GenerationalBox<T: GenerationalBoxValue + ?Sized, S: 'static = UnsyncStorage> {
     raw: MemoryLocation<S>,
     #[cfg(any(debug_assertions, feature = "check_generation"))]
     generation: u32,
@@ -94,6 +99,24 @@ impl<T: 'static, S: Storage<T>> GenerationalBox<T, S> {
             #[cfg(any(debug_assertions, feature = "check_generation"))]
             generation: self.generation,
         }
+    }
+
+    /// Recast the generational box to a different type.
+    pub fn recast<O: ?Sized + 'static>(self) -> GenerationalBox<O, S> {
+        GenerationalBox {
+            created_at: self.created_at,
+            generation: self.generation,
+            raw: self.raw,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn inner(&self) -> &MemoryLocation<S> {
+        &self.raw
+    }
+
+    pub fn store(&self) -> &S {
+        &self.raw.0.data
     }
 
     /// Try to read the value. Returns None if the value is no longer valid.
@@ -187,16 +210,16 @@ impl<T: 'static, S: Storage<T>> GenerationalBox<T, S> {
     }
 }
 
-impl<T, S: 'static> Copy for GenerationalBox<T, S> {}
+impl<T: GenerationalBoxValue + ?Sized, S: 'static> Copy for GenerationalBox<T, S> {}
 
-impl<T, S> Clone for GenerationalBox<T, S> {
+impl<T: GenerationalBoxValue + ?Sized, S> Clone for GenerationalBox<T, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
 /// A trait for a storage backing type. (RefCell, RwLock, etc.)
-pub trait Storage<Data = ()>: AnyStorage + 'static {
+pub trait Storage<Data: ?Sized = ()>: AnyStorage + 'static {
     /// Try to read the value. Returns None if the value is no longer valid.
     fn try_read(
         &'static self,
@@ -214,7 +237,7 @@ pub trait Storage<Data = ()>: AnyStorage + 'static {
 }
 
 /// A trait for any storage backing type.
-pub trait AnyStorage: Default {
+pub trait AnyStorage: Sized {
     /// The reference this storage type returns.
     type Ref<T: ?Sized + 'static>: Deref<Target = T>;
     /// The mutable reference this storage type returns.
@@ -235,13 +258,16 @@ pub trait AnyStorage: Default {
     }
 
     /// Try to map the ref.
-    fn try_map<T, U: ?Sized + 'static>(
+    fn try_map<T: ?Sized, U: ?Sized + 'static>(
         ref_: Self::Ref<T>,
         f: impl FnOnce(&T) -> Option<&U>,
     ) -> Option<Self::Ref<U>>;
 
     /// Map the ref.
-    fn map<T, U: ?Sized + 'static>(ref_: Self::Ref<T>, f: impl FnOnce(&T) -> &U) -> Self::Ref<U> {
+    fn map<T: ?Sized, U: ?Sized + 'static>(
+        ref_: Self::Ref<T>,
+        f: impl FnOnce(&T) -> &U,
+    ) -> Self::Ref<U> {
         Self::try_map(ref_, |v| Some(f(v))).unwrap()
     }
 
@@ -258,12 +284,7 @@ pub trait AnyStorage: Default {
     fn claim() -> MemoryLocation<Self>;
 
     /// Create a new owner. The owner will be responsible for dropping all of the generational boxes that it creates.
-    fn owner() -> Owner<Self> {
-        Owner {
-            owned: Default::default(),
-            phantom: PhantomData,
-        }
-    }
+    fn owner() -> Owner<Self>;
 }
 
 /// A dynamic memory location that can be used in a generational box.
@@ -396,7 +417,7 @@ impl<S: AnyStorage> Owner<S> {
     }
 
     /// Creates an invalid handle. This is useful for creating a handle that will be filled in later. If you use this before the value is filled in, you will get may get a panic or an out of date value.
-    pub fn invalid<T: 'static>(&self) -> GenerationalBox<T, S> {
+    pub fn invalid<T: 'static + ?Sized>(&self) -> GenerationalBox<T, S> {
         let location = S::claim();
         let generational_box = GenerationalBox {
             raw: location,

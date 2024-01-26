@@ -10,7 +10,7 @@ pub struct GenerationalRef<R> {
     pub(crate) borrow: GenerationalRefBorrowInfo,
 }
 
-impl<T: 'static, R: Deref<Target = T>> GenerationalRef<R> {
+impl<T: ?Sized + 'static, R: Deref<Target = T>> GenerationalRef<R> {
     pub(crate) fn new(
         inner: R,
         #[cfg(any(debug_assertions, feature = "debug_borrows"))] borrow: GenerationalRefBorrowInfo,
@@ -68,7 +68,7 @@ pub struct GenerationalRefMut<W> {
     pub(crate) borrow: GenerationalRefMutBorrowInfo,
 }
 
-impl<T: 'static, R: DerefMut<Target = T>> GenerationalRefMut<R> {
+impl<T: ?Sized + 'static, R: DerefMut<Target = T>> GenerationalRefMut<R> {
     pub(crate) fn new(
         inner: R,
         #[cfg(any(debug_assertions, feature = "debug_borrows"))]
