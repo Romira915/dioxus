@@ -88,6 +88,16 @@ impl<T: 'static> Storage<T> for GenericStorage<T> {
     }
 }
 
+impl<T> GenericStorage<T> {
+    /// Transform the value in place, taking ownership of it.
+    pub fn transform_in_place(&self, f: impl FnOnce(T) -> T) {
+        let mut value = self.0.borrow_mut();
+        if let Some(inner) = value.take() {
+            *value = Some(f(inner));
+        }
+    }
+}
+
 thread_local! {
     static GENERIC_RUNTIME: RefCell<HashMap<TypeId, Box<dyn Any>>> = RefCell::new(HashMap::new());
 }

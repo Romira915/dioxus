@@ -7,11 +7,17 @@ pub type SignalStorage = GenericStorage<Box<dyn SigSource>>;
 pub trait SigSource: 'static {
     fn read(&self) -> &dyn Any;
     fn write(&mut self) -> &mut dyn Any;
+
+    fn as_any(&mut self) -> &mut dyn Any;
 }
 
 pub struct ReadOnly;
 pub struct Writable;
 pub struct Untracked;
+
+pub trait SupportsWrites {}
+impl SupportsWrites for Writable {}
+impl SupportsWrites for Untracked {}
 
 // Just a normal value with nothing special
 // No subscriptions, etc
@@ -26,6 +32,14 @@ impl<T: 'static> SigSource for TrackedSource<T> {
         println!("Tracking write...");
         &mut self.0
     }
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+impl<T: 'static> TrackedSource<T> {
+    pub fn into_untracked(self) -> UntrackedSource<T> {
+        UntrackedSource(self.0)
+    }
 }
 
 /// A signal that's not tracked - modifications to this signal will not trigger updates.
@@ -37,6 +51,9 @@ impl<T: 'static> SigSource for UntrackedSource<T> {
     }
     fn write(&mut self) -> &mut dyn Any {
         &mut self.0
+    }
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -57,5 +74,8 @@ impl<T: 'static> SigSource for MemoSource<T> {
     }
     fn write(&mut self) -> &mut dyn Any {
         &mut self.value
+    }
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }

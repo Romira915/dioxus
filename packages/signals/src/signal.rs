@@ -6,15 +6,18 @@ use std::{
     fmt::{Debug, Display},
     mem::MaybeUninit,
     ops::Deref,
+    rc::Rc,
 };
 
+use dioxus_core::prelude::has_context;
 use generational_box::{
     AnyStorage, GenerationalBox, GenerationalRef, GenerationalRefMut, GenericStorage,
     MemoryLocation, Owner, Storage,
 };
 
 use crate::{
-    ReadOnly, SigSource, SignalStorage, TrackedSource, Untracked, UntrackedSource, Writable,
+    ReadOnly, SigSource, SignalStorage, SupportsWrites, TrackedSource, Untracked, UntrackedSource,
+    Writable,
 };
 
 /// A signal that implements Read/Write characteristics.
@@ -33,35 +36,30 @@ pub type UntrackedSignal<T> = Signal<T, Untracked, SignalStorage>;
 
 impl<T: 'static> Signal<T, Writable, SignalStorage> {
     /// Create a new signal with Write characteristics
-    fn new(value: T, owner: &Owner<SignalStorage>) -> Self {
+    pub fn new(value: T) -> Self {
         Signal {
-            inner: owner.insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
+            inner: owner().insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
             _marker: std::marker::PhantomData,
         }
     }
 
-    fn read_only(value: T, owner: &Owner<SignalStorage>) -> ReadSignal<T> {
-        ReadSignal {
-            inner: owner.insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
-            _marker: std::marker::PhantomData,
-        }
-    }
-
-    fn untracked(value: T, owner: &Owner<SignalStorage>) -> Signal<T, Untracked, SignalStorage> {
-        Signal {
-            inner: owner.insert(Box::new(UntrackedSource(value)) as Box<dyn SigSource>),
-            _marker: std::marker::PhantomData,
-        }
-    }
-
-    fn into_read_only(&self) -> ReadSignal<T> {
+    pub fn into_read_only(&self) -> ReadSignal<T> {
         ReadSignal {
             inner: self.inner,
             _marker: std::marker::PhantomData,
         }
     }
 
-    fn write(&mut self) -> <SignalStorage as AnyStorage>::Mut<T> {
+    pub fn untracked(value: T) -> Signal<T, Untracked, SignalStorage> {
+        Signal {
+            inner: owner().insert(Box::new(UntrackedSource(value)) as Box<dyn SigSource>),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: 'static, M: SupportsWrites> Signal<T, M, SignalStorage> {
+    pub fn write(&mut self) -> <SignalStorage as AnyStorage>::Mut<T> {
         let inner = self.inner.write();
 
         SignalStorage::map_mut(inner, |f| f.write().downcast_mut().unwrap())
@@ -69,10 +67,19 @@ impl<T: 'static> Signal<T, Writable, SignalStorage> {
 }
 
 impl<T: 'static, R> Signal<T, R, SignalStorage> {
-    fn read(&self) -> <SignalStorage as AnyStorage>::Ref<T> {
+    pub fn read(&self) -> <SignalStorage as AnyStorage>::Ref<T> {
         let inner = self.inner.read();
 
         SignalStorage::map(inner, |f| f.read().downcast_ref().unwrap())
+    }
+}
+
+impl<T: 'static> Signal<T, ReadOnly, SignalStorage> {
+    pub fn read_only(value: T) -> ReadSignal<T> {
+        ReadSignal {
+            inner: owner().insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 
@@ -80,15 +87,6 @@ impl<T: 'static, R> Signal<T, R, SignalStorage> {
 impl<T> Into<ReadSignal<T>> for Signal<T> {
     fn into(self) -> ReadSignal<T> {
         ReadSignal {
-            inner: self.inner,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T> Into<UntrackedSignal<T>> for Signal<T> {
-    fn into(self) -> UntrackedSignal<T> {
-        UntrackedSignal {
             inner: self.inner,
             _marker: std::marker::PhantomData,
         }
@@ -154,6 +152,17 @@ impl<T: Clone + 'static, S: 'static> Deref for Signal<T, S> {
     }
 }
 
+fn owner() -> Rc<Owner<SignalStorage>> {
+    thread_local! {
+        static DEFAULT_OWNER: Rc<Owner<SignalStorage>> = Rc::new(SignalStorage::owner());
+    }
+
+    match has_context() {
+        Some(owner) => owner,
+        None => DEFAULT_OWNER.with(|owner| owner.clone()),
+    }
+}
+
 #[test]
 fn new_owner() {
     fn my_component(
@@ -174,15 +183,15 @@ fn new_owner() {
         println!("g: {}", g());
     }
 
-    let owner = SignalStorage::owner();
-
-    let out = owner.insert(Box::new(TrackedSource(123_i32)));
-
-    *out.write() = Box::new(TrackedSource(456)) as Box<dyn SigSource>;
-
-    let mut signal: Signal<i32> = Signal::new(123, &owner);
-
     {
+        let owner = SignalStorage::owner();
+
+        let out = owner.insert(Box::new(TrackedSource(123_i32)));
+
+        *out.write() = Box::new(TrackedSource(456)) as Box<dyn SigSource>;
+
+        let mut signal: Signal<i32> = Signal::new(123);
+
         let val = signal.read();
         assert_eq!(*val, 123);
         drop(val);
@@ -192,13 +201,13 @@ fn new_owner() {
         println!("val: {}", *val);
     }
 
-    let a = Signal::new(123, &owner);
-    let b = Signal::new(HashMap::new(), &owner);
-    let c = Signal::new(Box::new(move || a()) as _, &owner);
+    let a = Signal::new(123);
+    let b = Signal::new(HashMap::new());
+    let c = Signal::new(Box::new(move || a()) as _);
     let d = a.clone().into();
-    let e = Signal::read_only("hello".to_string(), &owner);
-    let f = Signal::untracked(123, &owner);
-    let g = a.into();
+    let e = Signal::read_only("hello".to_string());
+    let f = Signal::untracked(123);
+    let g = Signal::untracked(a()); // there's no way to get a "untracked" variant of a regular signal from a signal - this needs to be fixed
 
     my_component(a, b, c, d, e, f, g);
 }

@@ -111,8 +111,8 @@ impl<T: 'static, S: Storage<T>> GenerationalBox<T, S> {
         }
     }
 
-    pub fn inner(&self) -> &MemoryLocation<S> {
-        &self.raw
+    pub fn inner(&self) -> &S {
+        &self.raw.0.data
     }
 
     pub fn store(&self) -> &S {
