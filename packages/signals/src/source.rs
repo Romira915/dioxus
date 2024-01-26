@@ -1,13 +1,25 @@
 use std::any::Any;
 
-use generational_box::GenericStorage;
+use generational_box::{AnyStorage, GenericStorage};
 
-pub type SignalStorage = GenericStorage<Box<dyn SigSource>>;
+pub trait SignalStorageA: AnyStorage {
+    type Source;
+}
 
-pub trait SigSource: 'static {
+pub type SignalStorage = GenericStorage<Box<dyn SignalSource>>;
+impl SignalStorageA for SignalStorage {
+    type Source = Box<dyn SignalSource>;
+}
+
+pub type SignalStorageSync = GenericStorage<Box<dyn SignalSource + Send + Sync>>;
+impl SignalStorageA for SignalStorageSync {
+    type Source = Box<dyn SignalSource + Send + Sync>;
+}
+
+pub trait SignalSource: 'static {
     fn read(&self) -> &dyn Any;
     fn write(&mut self) -> &mut dyn Any;
-
+    fn set(&mut self, new: Box<dyn Any>);
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
@@ -23,7 +35,7 @@ impl SupportsWrites for Untracked {}
 // No subscriptions, etc
 // Basically just a CopyValue
 pub struct TrackedSource<T>(pub T);
-impl<T: 'static> SigSource for TrackedSource<T> {
+impl<T: 'static> SignalSource for TrackedSource<T> {
     fn read(&self) -> &dyn Any {
         println!("Tracking read...");
         &self.0
@@ -31,6 +43,9 @@ impl<T: 'static> SigSource for TrackedSource<T> {
     fn write(&mut self) -> &mut dyn Any {
         println!("Tracking write...");
         &mut self.0
+    }
+    fn set(&mut self, new: Box<dyn Any>) {
+        self.0 = *new.downcast().unwrap();
     }
     fn as_any(&mut self) -> &mut dyn Any {
         self
@@ -45,12 +60,15 @@ impl<T: 'static> TrackedSource<T> {
 /// A signal that's not tracked - modifications to this signal will not trigger updates.
 /// Simplest signal imaginable!
 pub struct UntrackedSource<T>(pub T);
-impl<T: 'static> SigSource for UntrackedSource<T> {
+impl<T: 'static> SignalSource for UntrackedSource<T> {
     fn read(&self) -> &dyn Any {
         &self.0
     }
     fn write(&mut self) -> &mut dyn Any {
         &mut self.0
+    }
+    fn set(&mut self, new: Box<dyn Any>) {
+        self.0 = *new.downcast().unwrap();
     }
     fn as_any(&mut self) -> &mut dyn Any {
         self
@@ -68,12 +86,15 @@ impl<T> MemoSource<T> {
         self.computed = true;
     }
 }
-impl<T: 'static> SigSource for MemoSource<T> {
+impl<T: 'static> SignalSource for MemoSource<T> {
     fn read(&self) -> &dyn Any {
         &self.value
     }
     fn write(&mut self) -> &mut dyn Any {
         &mut self.value
+    }
+    fn set(&mut self, new: Box<dyn Any>) {
+        self.value = *new.downcast().unwrap();
     }
     fn as_any(&mut self) -> &mut dyn Any {
         self

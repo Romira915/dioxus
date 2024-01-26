@@ -10,6 +10,9 @@ pub use signal::*;
 mod source;
 pub use source::*;
 
+mod memo;
+pub use memo::*;
+
 // mod rt;
 // pub use rt::*;
 

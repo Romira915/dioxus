@@ -2857,6 +2857,7 @@ dependencies = [
 name = "dioxus-signals"
 version = "0.4.3"
 dependencies = [
+ "dioxus",
  "dioxus-core",
  "futures-channel",
  "futures-util",
@@ -2865,7 +2866,10 @@ dependencies = [
  "parking_lot",
  "rustc-hash",
  "serde",
+ "simple_logger",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

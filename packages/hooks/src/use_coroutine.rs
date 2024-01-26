@@ -71,25 +71,26 @@ where
     G: FnOnce(UnboundedReceiver<M>) -> F,
     F: Future<Output = ()> + 'static,
 {
-    let mut coroutine = use_hook(|| {
-        provide_context(Coroutine {
-            needs_regen: Signal::new(true),
-            tx: CopyValue::new(None),
-            task: CopyValue::new(None),
-        })
-    });
+    todo!()
+    // let mut coroutine = use_hook(|| {
+    //     provide_context(Coroutine {
+    //         needs_regen: Signal::new(true),
+    //         tx: CopyValue::new(None),
+    //         task: CopyValue::new(None),
+    //     })
+    // });
 
-    // We do this here so we can capture data with FnOnce
-    // this might not be the best API
-    if *coroutine.needs_regen.peek() {
-        let (tx, rx) = futures_channel::mpsc::unbounded();
-        let task = spawn(init(rx));
-        coroutine.tx.set(Some(tx));
-        coroutine.task.set(Some(task));
-        coroutine.needs_regen.set(false);
-    }
+    // // We do this here so we can capture data with FnOnce
+    // // this might not be the best API
+    // if *coroutine.needs_regen.peek() {
+    //     let (tx, rx) = futures_channel::mpsc::unbounded();
+    //     let task = spawn(init(rx));
+    //     coroutine.tx.set(Some(tx));
+    //     coroutine.task.set(Some(task));
+    //     coroutine.needs_regen.set(false);
+    // }
 
-    coroutine
+    // coroutine
 }
 
 /// Get a handle to a coroutine higher in the tree
@@ -97,48 +98,50 @@ where
 /// See the docs for [`use_coroutine`] for more details.
 #[must_use]
 pub fn use_coroutine_handle<M: 'static>() -> Coroutine<M> {
-    use_hook(|| consume_context::<Coroutine<M>>())
+    todo!()
+    // use_hook(|| consume_context::<Coroutine<M>>())
 }
 
 #[derive(PartialEq)]
 pub struct Coroutine<T: 'static> {
-    needs_regen: Signal<bool>,
-    tx: CopyValue<Option<UnboundedSender<T>>>,
-    task: CopyValue<Option<Task>>,
+    inner: Signal<T>, // needs_regen: Signal<bool>,
+                      // tx: CopyValue<Option<UnboundedSender<T>>>,
+                      // task: CopyValue<Option<Task>>,
 }
 
-impl<T> Coroutine<T> {
-    /// Get the underlying task handle
-    pub fn task(&self) -> Task {
-        self.task.read().clone().unwrap()
-    }
+// impl<T> Coroutine<T> {
+//     /// Get the underlying task handle
+//     pub fn task(&self) -> Task {
+//         self.task.read().clone().unwrap()
+//     }
 
-    /// Send a message to the coroutine
-    pub fn send(&self, msg: T) {
-        let _ = self.tx.read().as_ref().unwrap().unbounded_send(msg);
-    }
+//     /// Send a message to the coroutine
+//     pub fn send(&self, msg: T) {
+//         let _ = self.tx.read().as_ref().unwrap().unbounded_send(msg);
+//     }
 
-    pub fn tx(&self) -> UnboundedSender<T> {
-        self.tx.read().as_ref().unwrap().clone()
-    }
+//     pub fn tx(&self) -> UnboundedSender<T> {
+//         self.tx.read().as_ref().unwrap().clone()
+//     }
 
-    /// Restart this coroutine
-    ///
-    /// Forces the component to re-render, which will re-invoke the coroutine.
-    pub fn restart(&mut self) {
-        self.needs_regen.set(true);
-        self.task().stop();
-    }
-}
+//     /// Restart this coroutine
+//     ///
+//     /// Forces the component to re-render, which will re-invoke the coroutine.
+//     pub fn restart(&mut self) {
+//         self.needs_regen.set(true);
+//         self.task().stop();
+//     }
+// }
 
 // manual impl since deriving doesn't work with generics
 impl<T> Copy for Coroutine<T> {}
 impl<T> Clone for Coroutine<T> {
     fn clone(&self) -> Self {
         Self {
-            tx: self.tx,
-            task: self.task,
-            needs_regen: self.needs_regen,
+            inner: self.inner.clone(),
+            // tx: self.tx,
+            // task: self.task,
+            // needs_regen: self.needs_regen,
         }
     }
 }

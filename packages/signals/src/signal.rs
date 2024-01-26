@@ -5,8 +5,9 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     mem::MaybeUninit,
-    ops::Deref,
+    ops::{Add, Deref, Div, Mul, Sub},
     rc::Rc,
+    sync::Arc,
 };
 
 use dioxus_core::prelude::has_context;
@@ -16,35 +17,54 @@ use generational_box::{
 };
 
 use crate::{
-    ReadOnly, SigSource, SignalStorage, SupportsWrites, TrackedSource, Untracked, UntrackedSource,
-    Writable,
+    ReadOnly, SignalSource, SignalStorage, SignalStorageA, SignalStorageSync, SupportsWrites,
+    TrackedSource, Untracked, UntrackedSource, Writable,
 };
 
+pub fn use_signal<T>(f: impl FnOnce() -> T) -> Signal<T> {
+    todo!()
+}
+
+pub fn use_signal_sync<T>(f: impl FnOnce() -> T) -> Signal<T, Writable, SignalStorageSync> {
+    todo!()
+}
+
 /// A signal that implements Read/Write characteristics.
-pub struct Signal<T: ?Sized, M = Writable, S: 'static = SignalStorage> {
-    inner: GenerationalBox<Box<dyn SigSource>, S>,
+pub struct Signal<T: ?Sized, M = Writable, Store: SignalStorageA + 'static = SignalStorage> {
+    inner: GenerationalBox<Store::Source, Store>,
     _marker: std::marker::PhantomData<fn(T, M)>,
 }
 
+/// A base signal with no defaults
 pub type BaseSignal<T, M> = Signal<T, M>;
 
 /// A signal that only implements read characteristics.
-pub type ReadSignal<T> = Signal<T, ReadOnly, SignalStorage>;
+pub type ReadOnlSignal<T> = Signal<T, ReadOnly, SignalStorage>;
 
 /// A signal that's not tracked - modifications to this signal will not trigger updates.
 pub type UntrackedSignal<T> = Signal<T, Untracked, SignalStorage>;
+
+impl<T: 'static + Send + Sync> Signal<T, Writable, SignalStorageSync> {
+    pub fn new_sync(value: T) -> Signal<T, Writable, SignalStorageSync> {
+        let boxed = Box::new(TrackedSource(value)) as Box<dyn SignalSource + Send + Sync>;
+        Signal {
+            inner: sync_owner().insert(boxed),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
 
 impl<T: 'static> Signal<T, Writable, SignalStorage> {
     /// Create a new signal with Write characteristics
     pub fn new(value: T) -> Self {
         Signal {
-            inner: owner().insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
+            inner: unsync_owner().insert(Box::new(TrackedSource(value)) as Box<dyn SignalSource>),
             _marker: std::marker::PhantomData,
         }
     }
 
-    pub fn into_read_only(&self) -> ReadSignal<T> {
-        ReadSignal {
+    pub fn into_read_only(&self) -> ReadOnlSignal<T> {
+        ReadOnlSignal {
             inner: self.inner,
             _marker: std::marker::PhantomData,
         }
@@ -52,49 +72,61 @@ impl<T: 'static> Signal<T, Writable, SignalStorage> {
 
     pub fn untracked(value: T) -> Signal<T, Untracked, SignalStorage> {
         Signal {
-            inner: owner().insert(Box::new(UntrackedSource(value)) as Box<dyn SigSource>),
+            inner: unsync_owner().insert(Box::new(UntrackedSource(value)) as Box<dyn SignalSource>),
             _marker: std::marker::PhantomData,
         }
     }
 }
 
 impl<T: 'static, M: SupportsWrites> Signal<T, M, SignalStorage> {
-    pub fn write(&mut self) -> <SignalStorage as AnyStorage>::Mut<T> {
+    pub fn write(&mut self) -> <GenericStorage<SignalStorage> as AnyStorage>::Mut<T> {
         let inner = self.inner.write();
 
         SignalStorage::map_mut(inner, |f| f.write().downcast_mut().unwrap())
     }
+
+    pub fn set(&mut self, value: T) {
+        *self.write() = value;
+    }
+
+    pub fn with_mut<O>(&mut self, f: impl FnOnce(&mut T) -> O) -> O {
+        f(&mut *self.write())
+    }
 }
 
 impl<T: 'static, R> Signal<T, R, SignalStorage> {
-    pub fn read(&self) -> <SignalStorage as AnyStorage>::Ref<T> {
+    pub fn read(&self) -> <GenericStorage<SignalStorage> as AnyStorage>::Ref<T> {
         let inner = self.inner.read();
 
         SignalStorage::map(inner, |f| f.read().downcast_ref().unwrap())
     }
+
+    pub fn with<O>(&self, f: impl FnOnce(&T) -> O) -> O {
+        f(&*self.read())
+    }
 }
 
 impl<T: 'static> Signal<T, ReadOnly, SignalStorage> {
-    pub fn read_only(value: T) -> ReadSignal<T> {
-        ReadSignal {
-            inner: owner().insert(Box::new(TrackedSource(value)) as Box<dyn SigSource>),
+    pub fn read_only(value: T) -> ReadOnlSignal<T> {
+        ReadOnlSignal {
+            inner: unsync_owner().insert(Box::new(TrackedSource(value)) as Box<dyn SignalSource>),
             _marker: std::marker::PhantomData,
         }
     }
 }
 
 // Degrade a writable signal to a readonly signal
-impl<T> Into<ReadSignal<T>> for Signal<T> {
-    fn into(self) -> ReadSignal<T> {
-        ReadSignal {
+impl<T> Into<ReadOnlSignal<T>> for Signal<T> {
+    fn into(self) -> ReadOnlSignal<T> {
+        ReadOnlSignal {
             inner: self.inner,
             _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<T: ?Sized, M, S: 'static> Copy for Signal<T, M, S> {}
-impl<T: ?Sized, M, S> Clone for Signal<T, M, S> {
+impl<T: ?Sized, M, S: SignalStorageA + 'static> Copy for Signal<T, M, S> {}
+impl<T: ?Sized, M, S: SignalStorageA> Clone for Signal<T, M, S> {
     fn clone(&self) -> Self {
         Signal {
             inner: self.inner.clone(),
@@ -110,6 +142,12 @@ impl<T: Display + 'static, S> Display for Signal<T, S> {
     }
 }
 
+impl<T, S> PartialEq for Signal<T, S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.ptr_eq(&other.inner)
+    }
+}
+
 impl<T: Debug + 'static, S> Debug for Signal<T, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let read = Signal::<T, S>::read(self);
@@ -117,7 +155,84 @@ impl<T: Debug + 'static, S> Debug for Signal<T, S> {
     }
 }
 
-///
+impl<T: Add<Output = T> + Copy + 'static, S> std::ops::Add<T> for Signal<T, S> {
+    type Output = T;
+
+    #[track_caller]
+    fn add(self, rhs: T) -> Self::Output {
+        self.with(|v| *v + rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Add<Output = T> + Copy + 'static> std::ops::AddAssign<T>
+    for Signal<T, M, SignalStorage>
+{
+    #[track_caller]
+    fn add_assign(&mut self, rhs: T) {
+        self.with_mut(|v| *v = *v + rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Sub<Output = T> + Copy + 'static> std::ops::SubAssign<T>
+    for Signal<T, M, SignalStorage>
+{
+    #[track_caller]
+    fn sub_assign(&mut self, rhs: T) {
+        self.with_mut(|v| *v = *v - rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Sub<Output = T> + Copy + 'static> std::ops::Sub<T>
+    for Signal<T, M, SignalStorage>
+{
+    type Output = T;
+
+    #[track_caller]
+    fn sub(self, rhs: T) -> Self::Output {
+        self.with(|v| *v - rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Mul<Output = T> + Copy + 'static> std::ops::MulAssign<T>
+    for Signal<T, M, SignalStorage>
+{
+    #[track_caller]
+    fn mul_assign(&mut self, rhs: T) {
+        self.with_mut(|v| *v = *v * rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Mul<Output = T> + Copy + 'static> std::ops::Mul<T>
+    for Signal<T, M, SignalStorage>
+{
+    type Output = T;
+
+    #[track_caller]
+    fn mul(self, rhs: T) -> Self::Output {
+        self.with(|v| *v * rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Div<Output = T> + Copy + 'static> std::ops::DivAssign<T>
+    for Signal<T, M, SignalStorage>
+{
+    #[track_caller]
+    fn div_assign(&mut self, rhs: T) {
+        self.with_mut(|v| *v = *v / rhs)
+    }
+}
+
+impl<M: SupportsWrites, T: Div<Output = T> + Copy + 'static> std::ops::Div<T>
+    for Signal<T, M, SignalStorage>
+{
+    type Output = T;
+
+    #[track_caller]
+    fn div(self, rhs: T) -> Self::Output {
+        self.with(|v| *v / rhs)
+    }
+}
+
 /// Currently only limited to copy types, though could probably specialize for string/arc/rc
 impl<T: Clone + 'static, S: 'static> Deref for Signal<T, S> {
     type Target = dyn Fn() -> T;
@@ -152,7 +267,18 @@ impl<T: Clone + 'static, S: 'static> Deref for Signal<T, S> {
     }
 }
 
-fn owner() -> Rc<Owner<SignalStorage>> {
+fn sync_owner() -> Arc<Owner<SignalStorageSync>> {
+    thread_local! {
+        static DEFAULT_OWNER: Arc<Owner<SignalStorageSync>> = Arc::new(SignalStorageSync::owner());
+    }
+
+    match has_context() {
+        Some(owner) => owner,
+        None => DEFAULT_OWNER.with(|owner| owner.clone()),
+    }
+}
+
+fn unsync_owner() -> Rc<Owner<SignalStorage>> {
     thread_local! {
         static DEFAULT_OWNER: Rc<Owner<SignalStorage>> = Rc::new(SignalStorage::owner());
     }
@@ -169,8 +295,8 @@ fn new_owner() {
         a: Signal<i32>,
         b: Signal<HashMap<i32, String>>,
         c: Signal<Box<dyn Fn() -> i32>>,
-        d: ReadSignal<i32>,
-        e: ReadSignal<String>,
+        d: ReadOnlSignal<i32>,
+        e: ReadOnlSignal<String>,
         f: UntrackedSignal<i32>,
         g: UntrackedSignal<i32>,
     ) {
@@ -188,7 +314,7 @@ fn new_owner() {
 
         let out = owner.insert(Box::new(TrackedSource(123_i32)));
 
-        *out.write() = Box::new(TrackedSource(456)) as Box<dyn SigSource>;
+        *out.write() = Box::new(TrackedSource(456)) as Box<dyn SignalSource>;
 
         let mut signal: Signal<i32> = Signal::new(123);
 
