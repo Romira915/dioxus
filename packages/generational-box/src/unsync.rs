@@ -3,7 +3,10 @@ use crate::{
     references::{GenerationalRef, GenerationalRefMut},
     AnyStorage, MemoryLocation, MemoryLocationInner, Storage,
 };
-use std::cell::{Ref, RefCell, RefMut};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    marker::PhantomData,
+};
 
 /// A unsync storage. This is the default storage type.
 #[derive(Default)]
@@ -72,8 +75,8 @@ impl<T: 'static> Storage<T> for UnsyncStorage {
             })
     }
 
-    fn set(&self, value: T) {
-        *self.0.borrow_mut() = Some(Box::new(value));
+    fn set(&self, value: Box<T>) {
+        *self.0.borrow_mut() = Some(value);
     }
 }
 
@@ -156,6 +159,9 @@ impl AnyStorage for UnsyncStorage {
     }
 
     fn owner() -> crate::Owner<Self> {
-        todo!()
+        crate::Owner {
+            owned: Default::default(),
+            phantom: PhantomData,
+        }
     }
 }

@@ -10,13 +10,14 @@ use std::{
 };
 
 pub use error::*;
-pub use generic_storage::GenericStorage;
+// pub use generic_storage::GenericStorage;
 pub use references::*;
 pub use sync::SyncStorage;
 pub use unsync::UnsyncStorage;
 
 mod error;
-mod generic_storage;
+mod source;
+// mod generic_storage;
 mod references;
 mod sync;
 mod unsync;
@@ -70,7 +71,7 @@ impl<T: 'static, S: AnyStorage> Debug for GenerationalBox<T, S> {
     }
 }
 
-impl<T: 'static, S: Storage<T>> GenerationalBox<T, S> {
+impl<T: 'static + ?Sized, S: Storage<T>> GenerationalBox<T, S> {
     #[inline(always)]
     pub(crate) fn validate(&self) -> bool {
         #[cfg(any(debug_assertions, feature = "check_generation"))]
@@ -190,7 +191,7 @@ impl<T: 'static, S: Storage<T>> GenerationalBox<T, S> {
     }
 
     /// Set the value. Panics if the value is no longer valid.
-    pub fn set(&self, value: T) {
+    pub fn set(&self, value: Box<T>) {
         self.validate().then(|| {
             self.raw.0.data.set(value);
         });
@@ -233,7 +234,7 @@ pub trait Storage<Data: ?Sized = ()>: AnyStorage + 'static {
     ) -> Result<Self::Mut<Data>, BorrowMutError>;
 
     /// Set the value
-    fn set(&'static self, value: Data);
+    fn set(&'static self, value: Box<Data>);
 }
 
 /// A trait for any storage backing type.
@@ -355,9 +356,9 @@ impl<S> MemoryLocation<S> {
         }
     }
 
-    fn replace_with_caller<T: 'static>(
+    fn replace_with_caller<T: 'static + ?Sized>(
         &mut self,
-        value: T,
+        value: Box<T>,
         #[cfg(any(debug_assertions, feature = "debug_ownership"))]
         caller: &'static std::panic::Location<'static>,
     ) -> GenerationalBox<T, S>
@@ -390,16 +391,36 @@ impl<S: AnyStorage> Owner<S> {
         S: Storage<T>,
     {
         self.insert_with_caller(
-            value,
+            Box::new(value),
             #[cfg(any(debug_assertions, feature = "debug_ownership"))]
             std::panic::Location::caller(),
         )
     }
 
     /// Insert a value into the store with a specific location blamed for creating the value. The value will be dropped when the owner is dropped.
-    pub fn insert_with_caller<T: 'static>(
+    pub fn insert_with_caller<T: 'static + ?Sized>(
         &self,
-        value: T,
+        value: Box<T>,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        caller: &'static std::panic::Location<'static>,
+    ) -> GenerationalBox<T, S>
+    where
+        S: Storage<T>,
+    {
+        let mut location = S::claim();
+        let key = location.replace_with_caller(
+            value,
+            #[cfg(any(debug_assertions, feature = "debug_borrows"))]
+            caller,
+        );
+        self.owned.lock().push(location);
+        key
+    }
+
+    /// Insert a value into the store with a specific location blamed for creating the value. The value will be dropped when the owner is dropped.
+    pub fn insert_unsized<T: 'static + ?Sized>(
+        &self,
+        value: Box<T>,
         #[cfg(any(debug_assertions, feature = "debug_ownership"))]
         caller: &'static std::panic::Location<'static>,
     ) -> GenerationalBox<T, S>

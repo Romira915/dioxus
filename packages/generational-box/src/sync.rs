@@ -1,7 +1,10 @@
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
-use std::sync::{Arc, OnceLock};
+use std::{
+    marker::PhantomData,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     error::{self, ValueDroppedError},
@@ -96,7 +99,10 @@ impl AnyStorage for SyncStorage {
     }
 
     fn owner() -> crate::Owner<Self> {
-        todo!()
+        crate::Owner {
+            owned: Default::default(),
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -163,7 +169,7 @@ impl<T: Sync + Send + 'static> Storage<T> for SyncStorage {
             })
     }
 
-    fn set(&self, value: T) {
-        *self.0.write() = Some(Box::new(value));
+    fn set(&self, value: Box<T>) {
+        *self.0.write() = Some(value);
     }
 }

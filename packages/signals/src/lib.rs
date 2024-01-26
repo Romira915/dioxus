@@ -4,14 +4,16 @@
 #![warn(missing_docs)]
 #![allow(clippy::type_complexity)]
 
-mod signal;
-pub use signal::*;
+// mod signal;
+// pub use signal::*;
 
 mod source;
 pub use source::*;
 
-mod memo;
-pub use memo::*;
+// mod memo;
+// pub use memo::*;
+
+mod signal;
 
 // mod rt;
 // pub use rt::*;
