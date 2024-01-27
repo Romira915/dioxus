@@ -2,20 +2,22 @@ use std::{cell::RefCell, marker::PhantomData, sync::Mutex};
 
 use crate::{sync::SyncSlot, unsync::UnsyncSlot, GenerationalBox, Slot};
 
-pub trait Freelist<T>: Default {
+pub trait Freelist: Default {
     type List;
-    type Slot: Slot<T>;
-    fn alloc(&self) -> GenerationalBox<T, Self::Slot>;
-    fn free(&self, entry: GenerationalBox<T, Self::Slot>) -> Option<T>;
+    type Item;
+    type Slot: Slot<Self::Item>;
+    fn alloc(&self) -> GenerationalBox<Self::Item, Self::Slot>;
+    fn free(&self, entry: GenerationalBox<Self::Item, Self::Slot>) -> Option<Self::Item>;
 }
 
 pub struct UnsyncFreelist<T: 'static> {
     list: RefCell<Vec<&'static UnsyncSlot<T>>>,
 }
 
-impl<T> Freelist<T> for UnsyncFreelist<T> {
+impl<T> Freelist for UnsyncFreelist<T> {
     type List = RefCell<Vec<&'static UnsyncSlot<T>>>;
     type Slot = UnsyncSlot<T>;
+    type Item = T;
 
     fn alloc(&self) -> GenerationalBox<T, Self::Slot> {
         let slot = match self.list.borrow_mut().pop() {
@@ -52,9 +54,10 @@ pub struct SyncFreeList<T: 'static> {
     list: Mutex<Vec<&'static SyncSlot<T>>>,
 }
 
-impl<T> Freelist<T> for SyncFreeList<T> {
+impl<T> Freelist for SyncFreeList<T> {
     type List = Mutex<Vec<&'static SyncSlot<T>>>;
     type Slot = SyncSlot<T>;
+    type Item = T;
 
     fn alloc(&self) -> GenerationalBox<T, Self::Slot> {
         let slot = match self.list.lock().unwrap().pop() {
