@@ -11,18 +11,8 @@ Three main types manage state in Generational Box:
 Example:
 
 ```rust
-use generational_box::{UnsyncStorage, AnyStorage};
+use generational_box::{UnsyncStorage, Storage};
 
-// Create an owner for some state for a scope
-let owner = UnsyncStorage::owner();
-
-// Create some non-copy data, move it into a owner, and work with copy data
-let data: String = "hello world".to_string();
-let key = owner.insert(data);
-
-// The generational box can be read from and written to like a RefCell
-let value = key.read();
-assert_eq!(*value, "hello world");
 ```
 
 ## How it works

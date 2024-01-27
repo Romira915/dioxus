@@ -1,30 +1,93 @@
 use parking_lot::{
-    MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
-use std::{
-    marker::PhantomData,
-    sync::{Arc, OnceLock},
+    MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
 use crate::{
     error::{self, ValueDroppedError},
-    references::{GenerationalRef, GenerationalRefMut},
-    AnyStorage, MemoryLocation, MemoryLocationInner, Storage,
+    GenerationalRef, GenerationalRefMut, MemoryLocationBorrowInfo, Slot,
 };
 
-/// A thread safe storage. This is slower than the unsync storage, but allows you to share the value between threads.
-#[derive(Default)]
-pub struct SyncStorage(RwLock<Option<Box<dyn std::any::Any + Send + Sync>>>);
-
-static SYNC_RUNTIME: OnceLock<Arc<Mutex<Vec<MemoryLocation<SyncStorage>>>>> = OnceLock::new();
-
-fn sync_runtime() -> &'static Arc<Mutex<Vec<MemoryLocation<SyncStorage>>>> {
-    SYNC_RUNTIME.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+pub struct SyncSlot<T> {
+    data: RwLock<Option<T>>,
+    generation: std::sync::atomic::AtomicU32,
+    borrowed: MemoryLocationBorrowInfo,
 }
 
-impl AnyStorage for SyncStorage {
+impl<T> Default for SyncSlot<T> {
+    fn default() -> Self {
+        Self {
+            data: Default::default(),
+            generation: Default::default(),
+            borrowed: Default::default(),
+        }
+    }
+}
+
+impl<V: 'static> Slot<V> for SyncSlot<V> {
     type Ref<R: ?Sized + 'static> = GenerationalRef<MappedRwLockReadGuard<'static, R>>;
     type Mut<W: ?Sized + 'static> = GenerationalRefMut<MappedRwLockWriteGuard<'static, W>>;
+
+    fn try_read(
+        &'static self,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        at: crate::GenerationalRefBorrowInfo,
+    ) -> Result<Self::Ref<V>, crate::error::BorrowError> {
+        let read = self.data.try_read();
+
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        let read = read.ok_or_else(|| at.borrowed_from.borrow_error())?;
+
+        #[cfg(not(any(debug_assertions, feature = "debug_ownership")))]
+        let read = read.ok_or_else(|| {
+            error::BorrowError::AlreadyBorrowedMut(error::AlreadyBorrowedMutError {})
+        })?;
+
+        RwLockReadGuard::try_map(read, |any| any.as_ref())
+            .map_err(|_| {
+                error::BorrowError::Dropped(ValueDroppedError {
+                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+                    created_at: at.created_at,
+                })
+            })
+            .map(|guard| {
+                GenerationalRef::new(
+                    guard,
+                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+                    at,
+                )
+            })
+    }
+
+    fn try_write(
+        &'static self,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        at: crate::GenerationalRefMutBorrowInfo,
+    ) -> Result<Self::Mut<V>, crate::error::BorrowMutError> {
+        let write = self.data.try_write();
+
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        let write = write.ok_or_else(|| at.borrowed_from.borrow_mut_error())?;
+
+        #[cfg(not(any(debug_assertions, feature = "debug_ownership")))]
+        let write = write.ok_or_else(|| {
+            error::BorrowMutError::AlreadyBorrowed(error::AlreadyBorrowedError {})
+        })?;
+
+        RwLockWriteGuard::try_map(write, |any| any.as_mut())
+            .map_err(|_| {
+                error::BorrowMutError::Dropped(ValueDroppedError {
+                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+                    created_at: at.created_at,
+                })
+            })
+            .map(|guard| {
+                GenerationalRefMut::new(
+                    guard,
+                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+                    at,
+                )
+            })
+    }
 
     fn try_map<I: ?Sized, U: ?Sized + 'static>(
         ref_: Self::Ref<I>,
@@ -71,105 +134,27 @@ impl AnyStorage for SyncStorage {
             })
     }
 
-    fn data_ptr(&self) -> *const () {
-        self.0.data_ptr() as *const ()
+    fn set(&'static self, value: Option<V>) -> Option<V> {
+        let mut data = self.data.write();
+        let old = data.take();
+        *data = value;
+        old
     }
 
-    fn take(&self) -> bool {
-        self.0.write().take().is_some()
+    fn generation(&self) -> u32 {
+        self.generation.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn claim() -> MemoryLocation<Self> {
-        sync_runtime().lock().pop().unwrap_or_else(|| {
-            let data: &'static MemoryLocationInner<Self> =
-                &*Box::leak(Box::new(MemoryLocationInner {
-                    data: Self::default(),
-                    #[cfg(any(debug_assertions, feature = "check_generation"))]
-                    generation: 0.into(),
-                    #[cfg(any(debug_assertions, feature = "debug_borrows"))]
-                    borrow: Default::default(),
-                }));
-            MemoryLocation(data)
-        })
+    fn increment_generation(&self) -> u32 {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn recycle(location: &MemoryLocation<Self>) {
-        location.drop();
-        sync_runtime().lock().push(*location);
+    fn borrowed(&'static self) -> &'static MemoryLocationBorrowInfo {
+        &self.borrowed
     }
 
-    fn owner() -> crate::Owner<Self> {
-        crate::Owner {
-            owned: Default::default(),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<T: Sync + Send + 'static> Storage<T> for SyncStorage {
-    fn try_read(
-        &'static self,
-        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-        at: crate::GenerationalRefBorrowInfo,
-    ) -> Result<Self::Ref<T>, error::BorrowError> {
-        let read = self.0.try_read();
-
-        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-        let read = read.ok_or_else(|| at.borrowed_from.borrow_error())?;
-
-        #[cfg(not(any(debug_assertions, feature = "debug_ownership")))]
-        let read = read.ok_or_else(|| {
-            error::BorrowError::AlreadyBorrowedMut(error::AlreadyBorrowedMutError {})
-        })?;
-
-        RwLockReadGuard::try_map(read, |any| any.as_ref()?.downcast_ref())
-            .map_err(|_| {
-                error::BorrowError::Dropped(ValueDroppedError {
-                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-                    created_at: at.created_at,
-                })
-            })
-            .map(|guard| {
-                GenerationalRef::new(
-                    guard,
-                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-                    at,
-                )
-            })
-    }
-
-    fn try_write(
-        &'static self,
-        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-        at: crate::GenerationalRefMutBorrowInfo,
-    ) -> Result<Self::Mut<T>, error::BorrowMutError> {
-        let write = self.0.try_write();
-
-        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-        let write = write.ok_or_else(|| at.borrowed_from.borrow_mut_error())?;
-
-        #[cfg(not(any(debug_assertions, feature = "debug_ownership")))]
-        let write = write.ok_or_else(|| {
-            error::BorrowMutError::AlreadyBorrowed(error::AlreadyBorrowedError {})
-        })?;
-
-        RwLockWriteGuard::try_map(write, |any| any.as_mut()?.downcast_mut())
-            .map_err(|_| {
-                error::BorrowMutError::Dropped(ValueDroppedError {
-                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-                    created_at: at.created_at,
-                })
-            })
-            .map(|guard| {
-                GenerationalRefMut::new(
-                    guard,
-                    #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-                    at,
-                )
-            })
-    }
-
-    fn set(&self, value: Box<T>) {
-        *self.0.write() = Some(value);
+    fn data_ptr(&'static self) -> usize {
+        self.data.data_ptr() as _
     }
 }

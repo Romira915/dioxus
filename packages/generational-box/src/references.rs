@@ -47,7 +47,7 @@ impl<T: ?Sized + 'static, R: Deref<Target = T>> Deref for GenerationalRef<R> {
 /// Information about a borrow.
 pub struct GenerationalRefBorrowInfo {
     pub(crate) borrowed_at: &'static std::panic::Location<'static>,
-    pub(crate) borrowed_from: &'static crate::MemoryLocationBorrowInfo,
+    pub(crate) borrowed_from: &'static MemoryLocationBorrowInfo,
     pub(crate) created_at: &'static std::panic::Location<'static>,
 }
 
@@ -100,7 +100,7 @@ impl<T: ?Sized + 'static, W: DerefMut<Target = T>> DerefMut for GenerationalRefM
 /// Information about a mutable borrow.
 pub struct GenerationalRefMutBorrowInfo {
     /// The location where the borrow occurred.
-    pub(crate) borrowed_from: &'static crate::MemoryLocationBorrowInfo,
+    pub(crate) borrowed_from: &'static MemoryLocationBorrowInfo,
     pub(crate) created_at: &'static std::panic::Location<'static>,
 }
 
@@ -108,5 +108,38 @@ pub struct GenerationalRefMutBorrowInfo {
 impl Drop for GenerationalRefMutBorrowInfo {
     fn drop(&mut self) {
         self.borrowed_from.borrowed_mut_at.write().take();
+    }
+}
+
+use crate::error::*;
+
+#[cfg(any(debug_assertions, feature = "debug_borrows"))]
+#[derive(Debug, Default)]
+pub struct MemoryLocationBorrowInfo {
+    pub(crate) borrowed_at: parking_lot::RwLock<Vec<&'static std::panic::Location<'static>>>,
+    pub(crate) borrowed_mut_at: parking_lot::RwLock<Option<&'static std::panic::Location<'static>>>,
+}
+
+#[cfg(any(debug_assertions, feature = "debug_ownership"))]
+impl MemoryLocationBorrowInfo {
+    pub fn borrow_mut_error(&self) -> BorrowMutError {
+        if let Some(borrowed_mut_at) = self.borrowed_mut_at.read().as_ref() {
+            BorrowMutError::AlreadyBorrowedMut(crate::error::AlreadyBorrowedMutError {
+                #[cfg(any(debug_assertions, feature = "debug_borrows"))]
+                borrowed_mut_at,
+            })
+        } else {
+            BorrowMutError::AlreadyBorrowed(crate::error::AlreadyBorrowedError {
+                #[cfg(any(debug_assertions, feature = "debug_borrows"))]
+                borrowed_at: self.borrowed_at.read().clone(),
+            })
+        }
+    }
+
+    pub fn borrow_error(&self) -> BorrowError {
+        BorrowError::AlreadyBorrowedMut(crate::error::AlreadyBorrowedMutError {
+            #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+            borrowed_mut_at: self.borrowed_mut_at.read().unwrap(),
+        })
     }
 }

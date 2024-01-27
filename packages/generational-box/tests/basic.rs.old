@@ -1,4 +1,6 @@
-use generational_box::{AnyStorage, GenerationalBox, UnsyncStorage};
+use std::any::Any;
+
+use generational_box::{GenerationalBox, Storage, UnsyncStorage};
 
 /// # Example
 ///
@@ -17,12 +19,12 @@ fn reused() {
     let first_ptr;
     {
         let owner = UnsyncStorage::owner();
-        first_ptr = owner.insert(1).raw_ptr();
+        first_ptr = owner.insert(Box::new(1)).raw_ptr();
         drop(owner);
     }
     {
         let owner = UnsyncStorage::owner();
-        let second_ptr = owner.insert(1234).raw_ptr();
+        let second_ptr = owner.insert(Box::new(1234)).raw_ptr();
         assert_eq!(first_ptr, second_ptr);
         drop(owner);
     }
@@ -34,16 +36,14 @@ fn leaking_is_ok() {
     let key;
     {
         // create an owner
-        let owner = UnsyncStorage::owner();
+        let owner = UnsyncStorage::<Box<dyn Any>>::owner();
         // insert data into the store
-        key = owner.insert(data);
+        key = owner.insert(Box::new(data));
         // don't drop the owner
         std::mem::forget(owner);
     }
-    assert_eq!(
-        key.try_read().as_deref().unwrap(),
-        &"hello world".to_string()
-    );
+
+    assert_eq!(&*key.read_as::<String>(), &"hello world".to_string());
 }
 
 #[test]
@@ -52,9 +52,9 @@ fn drops() {
     let key;
     {
         // create an owner
-        let owner = UnsyncStorage::owner();
+        let owner = UnsyncStorage::<Box<dyn Any>>::owner();
         // insert data into the store
-        key = owner.insert(data);
+        key = owner.insert(Box::new(data));
         // drop the owner
     }
     assert!(key.try_read().is_err());
@@ -62,40 +62,40 @@ fn drops() {
 
 #[test]
 fn works() {
-    let owner = UnsyncStorage::owner();
-    let key = owner.insert(1);
+    let owner = UnsyncStorage::<Box<dyn Any>>::owner();
+    let key = owner.insert(Box::new(1_i32));
 
-    assert_eq!(*key.read(), 1);
+    assert_eq!(*key.read_as::<i32>(), 1);
 }
 
 #[test]
 fn insert_while_reading() {
-    let owner = UnsyncStorage::owner();
+    let owner = UnsyncStorage::<Box<dyn Any>>::owner();
     let key;
     {
         let data: String = "hello world".to_string();
-        key = owner.insert(data);
+        key = owner.insert(Box::new(data));
     }
-    let value = key.read();
-    owner.insert(&1);
+    let value = key.read_as::<String>();
+    owner.insert(Box::new(&1));
     assert_eq!(*value, "hello world");
 }
 
 #[test]
 #[should_panic]
 fn panics() {
-    let owner = UnsyncStorage::owner();
-    let key = owner.insert(1);
+    let owner = UnsyncStorage::<Box<dyn Any>>::owner();
+    let key = owner.insert(Box::new(1_i32));
     drop(owner);
 
-    assert_eq!(*key.read(), 1);
+    assert_eq!(*key.read_as::<i32>(), 1);
 }
 
 #[test]
 fn fuzz() {
     fn maybe_owner_scope(
-        valid_keys: &mut Vec<GenerationalBox<String>>,
-        invalid_keys: &mut Vec<GenerationalBox<String>>,
+        valid_keys: &mut Vec<GenerationalBox<UnsyncStorage>>,
+        invalid_keys: &mut Vec<GenerationalBox<UnsyncStorage>>,
         path: &mut Vec<u8>,
     ) {
         let branch_cutoff = 5;
@@ -106,20 +106,21 @@ fn fuzz() {
         };
 
         for i in 0..children {
-            let owner = UnsyncStorage::owner();
-            let key = owner.insert(format!("hello world {path:?}"));
+            let owner = UnsyncStorage::<Box<dyn Any>>::owner();
+            let key = owner.insert(Box::new(format!("hello world {path:?}")));
             valid_keys.push(key);
             path.push(i);
             // read all keys
             println!("{:?}", path);
             for key in valid_keys.iter() {
                 let value = key.read();
+                let value = value.downcast_ref::<String>().unwrap();
                 println!("{:?}", &*value);
                 assert!(value.starts_with("hello world"));
             }
             #[cfg(any(debug_assertions, feature = "check_generation"))]
             for key in invalid_keys.iter() {
-                assert!(key.try_read().is_ok());
+                assert!(key.try_read().is_err());
             }
             maybe_owner_scope(valid_keys, invalid_keys, path);
             invalid_keys.push(valid_keys.pop().unwrap());
