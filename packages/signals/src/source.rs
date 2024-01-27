@@ -56,12 +56,16 @@ thread_local! {
 static SYNC_ARENA: OnceLock<Arc<SyncArena<BoxUnsyncSignal>>> = OnceLock::new();
 
 pub struct ReadOnly;
-pub struct Writable;
+pub struct WritableMarker;
 pub struct Untracked;
 
+pub struct GlobalWritable;
+pub struct GlobalReadable;
+
 pub trait SupportsWrites {}
-impl SupportsWrites for Writable {}
+impl SupportsWrites for WritableMarker {}
 impl SupportsWrites for Untracked {}
+impl SupportsWrites for GlobalWritable {}
 
 // Tracks reads/writes
 pub struct TrackedSource<T: 'static> {

@@ -1,5 +1,7 @@
-use crate::callback::use_callback;
+use std::fmt::{Debug, Display};
+
 use crate::signal::use_signal;
+use crate::{callback::use_callback, Readable, Writable};
 use crate::{Dependency, ReadOnlySignal, Signal, SignalSlot};
 use dioxus_core::use_hook;
 
@@ -21,7 +23,7 @@ use dioxus_core::use_hook;
 /// }
 /// ```
 #[track_caller]
-pub fn use_memo<R: PartialEq>(f: impl FnMut() -> R + 'static) -> Memo<R> {
+pub fn use_memo<R: PartialEq>(f: impl FnMut() -> R + 'static) -> ReadOnlySignal<R> {
     todo!()
 }
 
@@ -41,6 +43,18 @@ impl<T> Clone for Memo<T> {
         Self {
             inner: self.inner.clone(),
         }
+    }
+}
+
+impl<T: Display + 'static> std::fmt::Display for Memo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl<T: Debug + 'static> std::fmt::Debug for Memo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
     }
 }
 

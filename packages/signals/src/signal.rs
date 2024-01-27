@@ -2,19 +2,21 @@ use std::{
     any::Any,
     cell::Cell,
     fmt::{Debug, Display},
+    io::prelude::Write,
     mem::MaybeUninit,
     ops::{Add, Deref, DerefMut, Div, Mul, Sub},
     rc::Rc,
 };
 
-use dioxus_core::prelude::{has_context, provide_context, IntoAttributeValue};
+use dioxus_core::prelude::{has_context, provide_context, IntoAttributeValue, ScopeId};
 use generational_box::{
     BoxMethods, GenerationalBox, MaybeSinkBox, Owner, Slot, SyncSlot, UnsyncSlot,
 };
 
 use crate::{
-    current_owner, BoxSyncSignal, BoxUnsyncSignal, ReadOnly, SignalSlot, Source, SupportsWrites,
-    SyncSignalSlot, TrackedSource, UnsyncSignalSlot, Untracked, UntrackedSource, Writable,
+    current_owner, BoxSyncSignal, BoxUnsyncSignal, GlobalReadable, GlobalWritable, ReadOnly,
+    Readable, ReadableVecExt, SignalSlot, Source, SupportsWrites, SyncSignalSlot, TrackedSource,
+    UnsyncSignalSlot, Untracked, UntrackedSource, Writable, WritableMarker,
 };
 
 pub fn use_signal<T: 'static>(f: impl FnOnce() -> T) -> WriteSignal<T> {
@@ -25,7 +27,7 @@ pub fn use_signal_sync<T: 'static>(f: impl FnOnce() -> T) -> WriteSignal<T, Sync
     todo!()
 }
 
-pub struct Signal<T, S: SignalSlot = UnsyncSignalSlot, M = Writable> {
+pub struct Signal<T, S: SignalSlot = UnsyncSignalSlot, M = WritableMarker> {
     generational_box: GenerationalBox<S>,
     _marker: std::marker::PhantomData<(T, M, S)>,
 }
@@ -37,10 +39,11 @@ pub struct Signal<T, S: SignalSlot = UnsyncSignalSlot, M = Writable> {
 unsafe impl<T: Send + Sync, M> Send for Signal<T, SyncSlot<BoxUnsyncSignal>, M> {}
 unsafe impl<T: Send + Sync, M> Sync for Signal<T, SyncSlot<BoxUnsyncSignal>, M> {}
 
-pub type SyncSignal<T, S = SyncSignalSlot> = Signal<T, S, Writable>;
+pub type SyncSignal<T, S = SyncSignalSlot> = Signal<T, S, WritableMarker>;
 pub type ReadOnlySignal<T, S = UnsyncSignalSlot> = Signal<T, S, ReadOnly>;
-pub type WriteSignal<T, S = UnsyncSignalSlot> = Signal<T, S, Writable>;
-pub type UntrackedSignal<T, S = UnsyncSignalSlot> = Signal<T, S, Writable>;
+pub type WriteSignal<T, S = UnsyncSignalSlot> = Signal<T, S, WritableMarker>;
+pub type UntrackedSignal<T, S = UnsyncSignalSlot> = Signal<T, S, WritableMarker>;
+pub type CopyValue<T, S = UnsyncSignalSlot> = UntrackedSignal<T, S>;
 
 impl<T: 'static> Signal<T> {
     pub fn new(value: T) -> Signal<T> {
@@ -68,6 +71,39 @@ impl<T: 'static> Signal<T> {
             generational_box: current_owner::<UnsyncSignalSlot>().insert(src),
             _marker: std::marker::PhantomData,
         }
+    }
+}
+
+impl<T: 'static, S: SignalSlot> CopyValue<T, S> {
+    pub fn new_in_scope(value: T, scope: ScopeId) -> Self {
+        let caller = std::panic::Location::caller();
+        let src: Box<dyn Source> = Box::new(TrackedSource { value });
+        Signal {
+            generational_box: current_owner::<S>().insert(src),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: 'static, S: SignalSlot> GlobalMemo<T, S> {
+    pub fn global_memo(value: fn() -> T) -> Self {
+        let caller = std::panic::Location::caller();
+        let src: Box<dyn Source> = Box::new(TrackedSource { value });
+        Signal {
+            generational_box: current_owner::<S>().insert(src),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+impl<T: 'static, S: SignalSlot> GlobalSignal<T, S> {
+    pub const fn global(value: fn() -> T) -> Self {
+        todo!()
+        // let caller = std::panic::Location::caller();
+        // let src: Box<dyn Source> = Box::new(TrackedSource { value });
+        // Signal {
+        //     generational_box: current_owner::<S>().insert(src),
+        //     _marker: std::marker::PhantomData,
+        // }
     }
 }
 
@@ -123,302 +159,61 @@ impl<T: 'static, S: SignalSlot> Signal<T, S> {
     }
 }
 
-impl<T: 'static, S: SignalSlot, M> Signal<T, S, M> {
-    /// Get the inner source type of the signal.
-    pub fn source(&self) -> S::Ref<S::Item> {
-        self.generational_box.read()
+impl<T: 'static, S: SignalSlot, M> Readable<T> for Signal<T, S, M> {
+    type Ref<R: ?Sized + 'static> = S::Ref<R>;
+
+    fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Self::Ref<U> {
+        S::map(ref_, f)
     }
 
-    pub fn read(&self) -> S::Ref<T> {
+    fn try_map_ref<I, U: ?Sized, F: FnOnce(&I) -> Option<&U>>(
+        ref_: Self::Ref<I>,
+        f: F,
+    ) -> Option<Self::Ref<U>> {
+        S::try_map(ref_, f)
+    }
+
+    fn read(&self) -> Self::Ref<T> {
         S::map(self.generational_box.read(), |f| {
             f.tracked_read();
             f.read().downcast_ref().unwrap()
         })
     }
 
-    pub fn cloned(&self) -> T
-    where
-        T: Clone,
-    {
-        self.read().deref().clone()
-    }
-
-    pub fn read_untracked(&self) -> S::Ref<T> {
+    fn peek(&self) -> Self::Ref<T> {
         S::map(self.generational_box.read(), |f| {
             f.read().downcast_ref().unwrap()
         })
     }
-
-    pub fn peek(&self) -> S::Ref<T> {
-        self.read_untracked()
-    }
-
-    pub fn with<O>(&self, f: impl FnOnce(&T) -> O) -> O {
-        f(self.read().deref())
-    }
-
-    /// Run a function with a reference to the value. If the value has been dropped, this will panic.
-    #[track_caller]
-    pub fn with_peek<O>(&self, f: impl FnOnce(&T) -> O) -> O {
-        f(&*self.peek())
-    }
-
-    /// Index into the inner value and return a reference to the result. If the value has been dropped or the index is invalid, this will panic.
-    #[track_caller]
-    pub fn index<I>(&self, index: I) -> S::Ref<T::Output>
-    where
-        T: std::ops::Index<I>,
-    {
-        S::map(self.read(), |v| v.index(index))
-    }
 }
 
-impl<T: 'static, S: SignalSlot, M> Signal<Vec<T>, S, M> {
-    /// Returns the length of the inner vector.
-    #[track_caller]
-    pub fn len(&self) -> usize {
-        self.with(|v| v.len())
+impl<T: 'static, S: SignalSlot, M: SupportsWrites> Writable<T> for Signal<T, S, M> {
+    type Mut<R: ?Sized + 'static> = S::Mut<R>;
+
+    fn map_mut<I, U: ?Sized, F: FnOnce(&mut I) -> &mut U>(
+        ref_: Self::Mut<I>,
+        f: F,
+    ) -> Self::Mut<U> {
+        S::map_mut(ref_, f)
     }
 
-    /// Returns true if the inner vector is empty.
-    #[track_caller]
-    pub fn is_empty(&self) -> bool {
-        self.with(|v| v.is_empty())
+    fn try_map_mut<I, U: ?Sized, F: FnOnce(&mut I) -> Option<&mut U>>(
+        ref_: Self::Mut<I>,
+        f: F,
+    ) -> Option<Self::Mut<U>> {
+        S::try_map_mut(ref_, f)
     }
 
-    /// Get the first element of the inner vector.
-    #[track_caller]
-    pub fn first(&self) -> Option<S::Ref<T>> {
-        S::try_map(self.read(), |v| v.first())
-    }
-
-    /// Get the last element of the inner vector.
-    #[track_caller]
-    pub fn last(&self) -> Option<S::Ref<T>> {
-        S::try_map(self.read(), |v| v.last())
-    }
-
-    /// Get the element at the given index of the inner vector.
-    #[track_caller]
-    pub fn get(&self, index: usize) -> Option<S::Ref<T>> {
-        S::try_map(self.read(), |v| v.get(index))
-    }
-
-    /// Get an iterator over the values of the inner vector.
-    #[track_caller]
-    pub fn iter(&self) -> ReadableValueIterator<'_, T, Self>
-    where
-        Self: Sized,
-    {
-        ReadableValueIterator {
-            index: 0,
-            value: self,
-            phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-/// An iterator over the values of a `Readable<Vec<T>>`.
-pub struct ReadableValueIterator<'a, T, R> {
-    index: usize,
-    value: &'a R,
-    phantom: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: 'static, S: SignalSlot, M> Iterator
-    for ReadableValueIterator<'a, T, Signal<Vec<T>, S, M>>
-{
-    type Item = S::Ref<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = self.index;
-        self.index += 1;
-        self.value.get(index)
-    }
-}
-
-impl<T: 'static, S: SignalSlot, M: SupportsWrites> Signal<T, S, M> {
-    pub fn write(&self) -> S::Mut<T> {
-        S::map_mut(self.generational_box.write(), |f| {
-            f.tracked_write();
-            f.write().downcast_mut().unwrap()
+    fn try_write(&self) -> Result<Self::Mut<T>, generational_box::error::BorrowMutError> {
+        self.generational_box.try_write().map(|mut_| {
+            S::map_mut(mut_, |f| {
+                f.tracked_write();
+                f.write().downcast_mut().unwrap()
+            })
         })
-    }
-
-    pub fn write_untracked(&self) -> S::Mut<T> {
-        S::map_mut(self.generational_box.write(), |f| {
-            f.write().downcast_mut().unwrap()
-        })
-    }
-
-    pub fn with_mut<O>(&self, f: impl FnOnce(&mut T) -> O) -> O {
-        f(self.write().deref_mut())
-    }
-
-    pub fn set(&self, value: T) {
-        // todo: might need to use a different setter in the event the value is not initalized
-        *self.write() = value;
-    }
-
-    /// Invert the boolean value of the signal. This will trigger an update on all subscribers.
-    #[track_caller]
-    pub fn toggle(&mut self)
-    where
-        T: std::ops::Not<Output = T> + Clone,
-    {
-        self.set(!self.read().clone());
-    }
-
-    /// Index into the inner value and return a reference to the result.
-    #[track_caller]
-    pub fn index_mut<I>(&self, index: I) -> S::Mut<T::Output>
-    where
-        T: std::ops::IndexMut<I>,
-    {
-        S::map_mut(self.write(), |v| v.index_mut(index))
-    }
-
-    /// Takes the value out of the Signal, leaving a Default in its place.
-    #[track_caller]
-    pub fn take(&self) -> T
-    where
-        T: Default,
-    {
-        self.with_mut(|v| std::mem::take(v))
-    }
-
-    /// Replace the value in the Signal, returning the old value.
-    #[track_caller]
-    pub fn replace(&self, value: T) -> T {
-        self.with_mut(|v| std::mem::replace(v, value))
-    }
-}
-
-// ,ethods for options
-impl<T: 'static, S: SignalSlot, M: SupportsWrites> Signal<Option<T>, S, M> {
-    /// Gets the value out of the Option, or inserts the given value if the Option is empty.
-    pub fn get_or_insert(&self, default: T) -> S::Mut<T> {
-        self.get_or_insert_with(|| default)
-    }
-
-    /// Gets the value out of the Option, or inserts the value returned by the given function if the Option is empty.
-    pub fn get_or_insert_with(&self, default: impl FnOnce() -> T) -> S::Mut<T> {
-        let borrow = self.read();
-        if borrow.is_none() {
-            drop(borrow);
-            self.with_mut(|v| *v = Some(default()));
-            S::map_mut(self.write(), |v| v.as_mut().unwrap())
-        } else {
-            S::map_mut(self.write(), |v| v.as_mut().unwrap())
-        }
-    }
-
-    /// Attempts to write the inner value of the Option.
-    #[track_caller]
-    pub fn as_mut(&self) -> Option<S::Mut<T>> {
-        S::try_map_mut(self.write(), |v: &mut Option<T>| v.as_mut())
-    }
-}
-
-// Methods for vec
-// eventually we might want to back vec with a smarter storage type for precise tracking
-impl<T: 'static, S: SignalSlot, M: SupportsWrites> Signal<Vec<T>, S, M> {
-    /// Pushes a new value to the end of the vector.
-    #[track_caller]
-    pub fn push(&mut self, value: T) {
-        self.with_mut(|v| v.push(value))
-    }
-
-    /// Pops the last value from the vector.
-    #[track_caller]
-    pub fn pop(&mut self) -> Option<T> {
-        self.with_mut(|v| v.pop())
-    }
-
-    /// Inserts a new value at the given index.
-    #[track_caller]
-    pub fn insert(&mut self, index: usize, value: T) {
-        self.with_mut(|v| v.insert(index, value))
-    }
-
-    /// Removes the value at the given index.
-    #[track_caller]
-    pub fn remove(&mut self, index: usize) -> T {
-        self.with_mut(|v| v.remove(index))
-    }
-
-    /// Clears the vector, removing all values.
-    #[track_caller]
-    pub fn clear(&mut self) {
-        self.with_mut(|v| v.clear())
-    }
-
-    /// Extends the vector with the given iterator.
-    #[track_caller]
-    pub fn extend(&mut self, iter: impl IntoIterator<Item = T>) {
-        self.with_mut(|v| v.extend(iter))
-    }
-
-    /// Truncates the vector to the given length.
-    #[track_caller]
-    pub fn truncate(&mut self, len: usize) {
-        self.with_mut(|v| v.truncate(len))
-    }
-
-    /// Swaps two values in the vector.
-    #[track_caller]
-    pub fn swap_remove(&mut self, index: usize) -> T {
-        self.with_mut(|v| v.swap_remove(index))
-    }
-
-    /// Retains only the values that match the given predicate.
-    #[track_caller]
-    pub fn retain(&mut self, f: impl FnMut(&T) -> bool) {
-        self.with_mut(|v| v.retain(f))
-    }
-
-    /// Splits the vector into two at the given index.
-    #[track_caller]
-    pub fn split_off(&mut self, at: usize) -> Vec<T> {
-        self.with_mut(|v| v.split_off(at))
-    }
-
-    /// Try to mutably get an element from the vector.
-    #[track_caller]
-    pub fn get_mut(&self, index: usize) -> Option<S::Mut<T>> {
-        S::try_map_mut(self.write(), |v: &mut Vec<T>| v.get_mut(index))
-    }
-
-    /// Gets an iterator over the values of the vector.
-    #[track_caller]
-    pub fn iter_mut(&self) -> WritableValueIterator<T, Self>
-    where
-        Self: Sized + Clone,
-    {
-        WritableValueIterator {
-            index: 0,
-            value: self.clone(),
-            phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-/// An iterator over the values of a `Writable<Vec<T>>`.
-pub struct WritableValueIterator<T, R> {
-    index: usize,
-    value: R,
-    phantom: std::marker::PhantomData<T>,
-}
-
-impl<T: 'static, S: SignalSlot, M: SupportsWrites> Iterator
-    for WritableValueIterator<T, Signal<Vec<T>, S, M>>
-{
-    type Item = S::Mut<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = self.index;
-        self.index += 1;
-        self.value.get_mut(index)
     }
 }
 
@@ -449,7 +244,7 @@ impl<T, S: SignalSlot, M> Clone for Signal<T, S, M> {
 
 impl<T: Default + 'static, S: SignalSlot> Default for Signal<T, S> {
     fn default() -> Self {
-        Signal::<T, S, Writable>::new_maybe_sync(T::default())
+        Signal::<T, S, WritableMarker>::new_maybe_sync(T::default())
     }
 }
 impl<T: Display + 'static, S: SignalSlot, M> Display for Signal<T, S, M> {
@@ -464,7 +259,7 @@ impl<T: Debug + 'static, S: SignalSlot, M> Debug for Signal<T, S, M> {
     }
 }
 
-impl<T, S: SignalSlot> Into<Signal<T, S, ReadOnly>> for Signal<T, S, Writable> {
+impl<T, S: SignalSlot> Into<Signal<T, S, ReadOnly>> for Signal<T, S, WritableMarker> {
     fn into(self) -> Signal<T, S, ReadOnly> {
         Signal {
             generational_box: self.generational_box,

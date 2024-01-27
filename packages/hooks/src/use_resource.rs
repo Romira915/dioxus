@@ -6,7 +6,14 @@ use dioxus_core::{
 use dioxus_signals::*;
 use futures_util::{future, pin_mut, FutureExt};
 use std::{
-    any::Any, cell::Cell, future::Future, path::Display, pin::Pin, rc::Rc, sync::Arc, task::Poll,
+    any::Any,
+    cell::Cell,
+    fmt::{Debug, Display},
+    future::Future,
+    pin::Pin,
+    rc::Rc,
+    sync::Arc,
+    task::Poll,
 };
 
 /// A future that resolves to a value.
@@ -68,6 +75,19 @@ pub struct AsyncMemo<T: 'static> {
     state: Signal<UseResourceState<T>>,
 }
 
+impl<T: Display> std::fmt::Display for AsyncMemo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value
+            .with(|r| r.as_ref().map(|v| v.fmt(f)).unwrap_or(Ok(())))
+    }
+}
+impl<T: Debug> std::fmt::Debug for AsyncMemo<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value
+            .with(|r| r.as_ref().map(|v| v.fmt(f)).unwrap_or(Ok(())))
+    }
+}
+
 impl<T> AsyncMemo<T> {
     /// Restart the future with new dependencies.
     ///
@@ -124,12 +144,6 @@ impl<T> AsyncMemo<T> {
         //     // Task, no value - we're still pending
         //     (Some(_), None) => UseResourceState::Pending,
         // }
-    }
-}
-
-impl<T> std::fmt::Display for AsyncMemo<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
     }
 }
 

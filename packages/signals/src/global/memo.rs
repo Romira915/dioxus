@@ -1,6 +1,7 @@
-use crate::read::Readable;
+use crate::{read::Readable, SignalSlot};
 use dioxus_core::prelude::{IntoAttributeValue, ScopeId};
-use generational_box::{AnyStorage, UnsyncStorage};
+use generational_box::{Slot, UnsyncSlot};
+// use generational_box::{AnyStorage, UnsyncStorage};
 use std::{mem::MaybeUninit, ops::Deref};
 
 use crate::{ReadOnlySignal, Signal};
@@ -53,20 +54,20 @@ impl<T: PartialEq + 'static> GlobalMemo<T> {
 }
 
 impl<T: PartialEq + 'static> Readable<T> for GlobalMemo<T> {
-    type Ref<R: ?Sized + 'static> = generational_box::GenerationalRef<std::cell::Ref<'static, R>>;
+    type Ref<R: ?Sized + 'static> = <UnsyncSlot<T> as Slot>::Ref<R>;
 
     fn map_ref<I: ?Sized, U: ?Sized, F: FnOnce(&I) -> &U>(
         ref_: Self::Ref<I>,
         f: F,
     ) -> Self::Ref<U> {
-        <UnsyncStorage as AnyStorage>::map(ref_, f)
+        UnsyncSlot::map(ref_, f)
     }
 
     fn try_map_ref<I, U: ?Sized, F: FnOnce(&I) -> Option<&U>>(
         ref_: Self::Ref<I>,
         f: F,
     ) -> Option<Self::Ref<U>> {
-        <UnsyncStorage as AnyStorage>::try_map(ref_, f)
+        <UnsyncSlot as Slot>::try_map(ref_, f)
     }
 
     #[track_caller]
