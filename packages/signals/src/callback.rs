@@ -1,7 +1,6 @@
 use dioxus_core::prelude::use_hook;
-use generational_box::UnsyncStorage;
 
-use crate::{CopyValue, Writable};
+use crate::{Signal, UntrackedSignal};
 
 /// A callback that's always current
 ///
@@ -13,14 +12,16 @@ use crate::{CopyValue, Writable};
 pub fn use_callback<O>(f: impl FnMut() -> O + 'static) -> UseCallback<O> {
     // Create a copyvalue with no contents
     // This copyvalue is generic over F so that it can be sized properly
-    let mut inner: CopyValue<_, UnsyncStorage> = use_hook(|| CopyValue::invalid());
+    let mut inner = use_hook(|| Signal::untracked(None));
 
     // Every time this hook is called replace the inner callback with the new callback
-    inner.set(f);
+    inner.set(Some(f));
 
     // And then wrap that callback in a boxed callback so we're blind to the size of the actual callback
     use_hook(|| UseCallback {
-        inner: CopyValue::new(Box::new(move || inner.write()())),
+        inner: UntrackedSignal::new(Box::new(move || {
+            inner.with_mut(|f: &mut Option<_>| f.as_mut().unwrap()())
+        })),
     })
 }
 
@@ -29,7 +30,7 @@ pub fn use_callback<O>(f: impl FnMut() -> O + 'static) -> UseCallback<O> {
 /// If you need a callback that returns a value, you can simply wrap the closure you pass in that sets a value in its scope
 #[derive(PartialEq)]
 pub struct UseCallback<O: 'static + ?Sized> {
-    inner: CopyValue<dyn FnMut() -> O>,
+    inner: UntrackedSignal<Box<dyn FnMut() -> O>>,
 }
 
 impl<O: 'static + ?Sized> Clone for UseCallback<O> {
@@ -39,9 +40,9 @@ impl<O: 'static + ?Sized> Clone for UseCallback<O> {
 }
 // impl<O: 'static> Copy for UseCallback<O> {}
 
-impl<O: ?Sized> UseCallback<O> {
+impl<O> UseCallback<O> {
     /// Call the callback
     pub fn call(&mut self) -> O {
-        (self.inner.value.write().as_mut())()
+        self.inner.with_mut(|f| f())
     }
 }

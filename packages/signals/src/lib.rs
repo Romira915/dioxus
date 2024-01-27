@@ -10,12 +10,11 @@
 mod source;
 pub use source::*;
 
-// mod memo;
-// pub use memo::*;
+mod memo;
+pub use memo::*;
 
-// mod signal;
-
-mod signal3;
+mod signal;
+pub use signal::*;
 
 // mod rt;
 // pub use rt::*;
@@ -29,14 +28,14 @@ mod signal3;
 // pub(crate) mod signal;
 // pub use signal::*;
 
-// mod callback;
-// pub use callback::*;
+mod callback;
+pub use callback::*;
 
 // mod read_only_signal;
 // pub use read_only_signal::*;
 
-// mod dependency;
-// pub use dependency::*;
+mod dependency;
+pub use dependency::*;
 
 // mod map;
 // pub use map::*;

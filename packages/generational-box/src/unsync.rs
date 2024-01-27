@@ -18,9 +18,10 @@ impl<T> Default for UnsyncSlot<T> {
     }
 }
 
-impl<T: 'static> Slot<T> for UnsyncSlot<T> {
+impl<T: 'static> Slot for UnsyncSlot<T> {
     type Ref<R: ?Sized + 'static> = GenerationalRef<Ref<'static, R>>;
     type Mut<W: ?Sized + 'static> = GenerationalRefMut<RefMut<'static, W>>;
+    type Item = T;
 
     fn try_read(
         &'static self,

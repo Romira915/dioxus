@@ -1,13 +1,17 @@
-use std::{cell::RefCell, marker::PhantomData, sync::Mutex};
+use std::{cell::RefCell, sync::Mutex};
 
 use crate::{sync::SyncSlot, unsync::UnsyncSlot, GenerationalBox, Slot};
 
 pub trait Freelist: Default {
     type List;
     type Item;
-    type Slot: Slot<Self::Item>;
-    fn alloc(&self) -> GenerationalBox<Self::Item, Self::Slot>;
-    fn free(&self, entry: GenerationalBox<Self::Item, Self::Slot>) -> Option<Self::Item>;
+    type Slot: Slot<Item = Self::Item>;
+    fn alloc(
+        &self,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        created_at: &'static std::panic::Location<'static>,
+    ) -> GenerationalBox<Self::Slot>;
+    fn free(&self, entry: GenerationalBox<Self::Slot>) -> Option<Self::Item>;
 }
 
 pub struct UnsyncFreelist<T: 'static> {
@@ -19,7 +23,11 @@ impl<T> Freelist for UnsyncFreelist<T> {
     type Slot = UnsyncSlot<T>;
     type Item = T;
 
-    fn alloc(&self) -> GenerationalBox<T, Self::Slot> {
+    fn alloc(
+        &self,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        created_at: &'static std::panic::Location<'static>,
+    ) -> GenerationalBox<Self::Slot> {
         let slot = match self.list.borrow_mut().pop() {
             Some(slot) => slot,
             None => Box::leak(Box::new(UnsyncSlot::default())),
@@ -30,12 +38,11 @@ impl<T> Freelist for UnsyncFreelist<T> {
             #[cfg(any(debug_assertions, feature = "check_generation"))]
             generation: slot.generation(),
             #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-            created_at: std::panic::Location::caller(),
-            _p: PhantomData,
+            created_at,
         }
     }
 
-    fn free(&self, entry: GenerationalBox<T, Self::Slot>) -> Option<T> {
+    fn free(&self, entry: GenerationalBox<Self::Slot>) -> Option<T> {
         self.list.borrow_mut().push(entry.slot);
         entry.slot.increment_generation();
         entry.slot.set(None)
@@ -54,12 +61,21 @@ pub struct SyncFreeList<T: 'static> {
     list: Mutex<Vec<&'static SyncSlot<T>>>,
 }
 
+// Let the sync-free list *technically* bye send/sync for unsync values
+// We prevent the creation of sync slots for unsync values, so this is safe
+unsafe impl<T> Send for SyncFreeList<T> {}
+unsafe impl<T> Sync for SyncFreeList<T> {}
+
 impl<T> Freelist for SyncFreeList<T> {
     type List = Mutex<Vec<&'static SyncSlot<T>>>;
     type Slot = SyncSlot<T>;
     type Item = T;
 
-    fn alloc(&self) -> GenerationalBox<T, Self::Slot> {
+    fn alloc(
+        &self,
+        #[cfg(any(debug_assertions, feature = "debug_ownership"))]
+        created_at: &'static std::panic::Location<'static>,
+    ) -> GenerationalBox<Self::Slot> {
         let slot = match self.list.lock().unwrap().pop() {
             Some(slot) => slot,
             None => Box::leak(Box::new(SyncSlot::default())),
@@ -70,12 +86,11 @@ impl<T> Freelist for SyncFreeList<T> {
             #[cfg(any(debug_assertions, feature = "check_generation"))]
             generation: slot.generation(),
             #[cfg(any(debug_assertions, feature = "debug_ownership"))]
-            created_at: std::panic::Location::caller(),
-            _p: PhantomData,
+            created_at,
         }
     }
 
-    fn free(&self, entry: GenerationalBox<T, Self::Slot>) -> Option<T> {
+    fn free(&self, entry: GenerationalBox<Self::Slot>) -> Option<T> {
         self.list.lock().unwrap().push(entry.slot);
         entry.slot.increment_generation();
         entry.slot.set(None)

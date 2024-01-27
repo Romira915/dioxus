@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 mod references;
 use error::{BorrowError, BorrowMutError, ValueDroppedError};
 use references::*;
@@ -8,17 +6,19 @@ pub mod error;
 // mod storage;
 mod arena;
 mod freelist;
+mod maybesink;
 mod slot;
 mod sync;
 mod unsync;
 
 pub use arena::*;
 pub use freelist::*;
+pub use maybesink::*;
 pub use slot::*;
 pub use sync::*;
 pub use unsync::*;
 
-pub struct GenerationalBox<T, S: 'static> {
+pub struct GenerationalBox<S: 'static> {
     slot: &'static S,
 
     #[cfg(any(debug_assertions, feature = "check_generation"))]
@@ -26,11 +26,9 @@ pub struct GenerationalBox<T, S: 'static> {
 
     #[cfg(any(debug_assertions, feature = "debug_ownership"))]
     created_at: &'static std::panic::Location<'static>,
-
-    _p: PhantomData<T>,
 }
 
-impl<T, S: Slot<T>> GenerationalBox<T, S> {
+impl<S: Slot> GenerationalBox<S> {
     /// Get the id of the generational box.
     pub fn id(&self) -> GenerationalBoxId {
         GenerationalBoxId {
@@ -53,7 +51,7 @@ impl<T, S: Slot<T>> GenerationalBox<T, S> {
     }
     /// Try to read the value. Returns None if the value is no longer valid.
     #[track_caller]
-    pub fn try_read(&self) -> Result<S::Ref<T>, BorrowError> {
+    pub fn try_read(&self) -> Result<S::Ref<S::Item>, BorrowError> {
         if !self.validate() {
             return Err(BorrowError::Dropped(ValueDroppedError {
                 #[cfg(any(debug_assertions, feature = "debug_borrows"))]
@@ -83,13 +81,13 @@ impl<T, S: Slot<T>> GenerationalBox<T, S> {
 
     /// Read the value. Panics if the value is no longer valid.
     #[track_caller]
-    pub fn read(&self) -> S::Ref<T> {
+    pub fn read(&self) -> S::Ref<S::Item> {
         self.try_read().unwrap()
     }
 
     /// Try to write the value. Returns None if the value is no longer valid.
     #[track_caller]
-    pub fn try_write(&self) -> Result<S::Mut<T>, BorrowMutError> {
+    pub fn try_write(&self) -> Result<S::Mut<S::Item>, BorrowMutError> {
         if !self.validate() {
             return Err(BorrowMutError::Dropped(ValueDroppedError {
                 #[cfg(any(debug_assertions, feature = "debug_borrows"))]
@@ -117,12 +115,12 @@ impl<T, S: Slot<T>> GenerationalBox<T, S> {
 
     /// Write the value. Panics if the value is no longer valid.
     #[track_caller]
-    pub fn write(&self) -> S::Mut<T> {
+    pub fn write(&self) -> S::Mut<S::Item> {
         self.try_write().unwrap()
     }
 
     /// Set the value. Panics if the value is no longer valid.
-    pub fn set(&self, value: T) -> Option<T> {
+    pub fn set(&self, value: S::Item) -> Option<S::Item> {
         if !self.validate() {
             return None;
         }
@@ -151,9 +149,15 @@ pub struct GenerationalBoxId {
     generation: u32,
 }
 
-impl<T, S: 'static> Copy for GenerationalBox<T, S> {}
+impl<S: 'static> Copy for GenerationalBox<S> {}
 
-impl<T, S> Clone for GenerationalBox<T, S> {
+impl<T: Slot> PartialEq for GenerationalBox<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.slot.data_ptr() == other.slot.data_ptr()
+    }
+}
+
+impl<S> Clone for GenerationalBox<S> {
     fn clone(&self) -> Self {
         *self
     }

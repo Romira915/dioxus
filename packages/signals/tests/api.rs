@@ -1,11 +1,15 @@
+use std::collections::HashMap;
+
+use dioxus_signals::*;
+
 #[test]
 fn new_owner() {
     fn my_component(
         a: Signal<i32>,
         b: Signal<HashMap<i32, String>>,
         c: Signal<Box<dyn Fn() -> i32>>,
-        d: ReadOnlSignal<i32>,
-        e: ReadOnlSignal<String>,
+        d: ReadOnlySignal<i32>,
+        e: ReadOnlySignal<String>,
         f: UntrackedSignal<i32>,
         g: UntrackedSignal<i32>,
     ) {
@@ -19,12 +23,6 @@ fn new_owner() {
     }
 
     {
-        let owner = UnsyncSignalStorage::owner();
-
-        let out = owner.insert(Box::new(TrackedSource(123_i32)));
-
-        *out.write() = Box::new(TrackedSource(456)) as Box<dyn SignalSource>;
-
         let mut signal: Signal<i32> = Signal::new(123);
 
         let val = signal.read();
@@ -44,5 +42,32 @@ fn new_owner() {
     let f = Signal::untracked(123);
     let g = Signal::untracked(a()); // there's no way to get a "untracked" variant of a regular signal from a signal - this needs to be fixed
 
-    1
+    my_component(a, b, c, d, e, f, g);
+}
+
+fn it_works() {
+    fn api(a: Signal<i32>, b: ReadOnlySignal<i32>) {
+        a.read();
+        a.read_untracked();
+        a.write();
+        a.write_untracked();
+
+        let c = a();
+    }
+
+    fn send_signal_is_send(s: Signal<i32, SyncSignalSlot>) {
+        fn send<T: Send>(_: T) {}
+
+        send(s);
+    }
+
+    fn unsend_signal_is_not_send(s: Signal<Cell<i32>, SyncSignalSlot>) {
+        fn send<T: Send>(_: T) {}
+        // this should fail!
+        // send(s);
+    }
+
+    // fn composite(a: Signal<i32>) {
+    //     api(a, a.into());
+    // }
 }

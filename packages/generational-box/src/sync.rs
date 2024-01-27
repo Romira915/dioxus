@@ -23,9 +23,10 @@ impl<T> Default for SyncSlot<T> {
     }
 }
 
-impl<V: 'static> Slot<V> for SyncSlot<V> {
+impl<V: 'static> Slot for SyncSlot<V> {
     type Ref<R: ?Sized + 'static> = GenerationalRef<MappedRwLockReadGuard<'static, R>>;
     type Mut<W: ?Sized + 'static> = GenerationalRefMut<MappedRwLockWriteGuard<'static, W>>;
+    type Item = V;
 
     fn try_read(
         &'static self,

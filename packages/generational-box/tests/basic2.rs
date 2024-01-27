@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use generational_box::*;
 
@@ -37,7 +37,7 @@ fn new() {
 
 #[test]
 fn with_owner() {
-    let arena = Arena::new::<i32>();
+    let arena = Arc::new(Arena::new::<i32>());
 
     let mut owner = arena.owner();
 

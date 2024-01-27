@@ -15,7 +15,7 @@ fn App() -> Element {
             onclick: move |_| signal += 1,
             "Increase"
         }
-        Child { signal: doubled }
+        Child { signal: doubled.into() }
     }
 }
 

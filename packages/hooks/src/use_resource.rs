@@ -86,7 +86,7 @@ impl<T> AsyncMemo<T> {
     }
 
     /// Suspend the component until the future is resolved
-    pub fn suspend(&self) -> Option<ReadOnlSignal<T>> {
+    pub fn suspend(&self) -> Option<ReadOnlySignal<T>> {
         todo!()
     }
 
